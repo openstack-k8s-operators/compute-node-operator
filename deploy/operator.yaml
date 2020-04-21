@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: compute-node-operator
+  namespace: openshift-machine-api
 spec:
   replicas: 1
   selector:
