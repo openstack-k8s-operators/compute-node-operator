@@ -1,0 +1,25 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: {{ .WorkerOspRole }}
+  name: 02-{{ .WorkerOspRole }}-iptables
+spec:
+  config:
+    ignition:
+      version: 2.2.0
+    systemd:
+      units:
+      - contents: |
+          [Unit]
+          Description=IPTables service
+          After=kubelet.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/sbin/iptables -t nat -A OUTPUT -p tcp -d {{ .K8sServiceIp }} --dport 443 -j DNAT --to-destination {{ .ApiIntIp }}:6443
+
+          [Install]
+          WantedBy=multi-user.target
+        enabled: true
+        name: api-iptables.service

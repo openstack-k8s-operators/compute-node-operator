@@ -1,0 +1,9 @@
+apiVersion: v1
+data:
+  disableTemplating: dHJ1ZQo=
+  userData: {{ .WorkerOspUserData }}
+kind: Secret
+metadata:
+  name: {{ .WorkerOspRole }}-user-data
+  namespace: openshift-machine-api
+type: Opaque

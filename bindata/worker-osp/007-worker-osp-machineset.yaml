@@ -1,0 +1,32 @@
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  labels:
+    machine.openshift.io/cluster-api-cluster: {{ .ClusterName }}
+    machine.openshift.io/cluster-api-machine-role: {{ .WorkerOspRole }}
+    machine.openshift.io/cluster-api-machine-type: {{ .WorkerOspRole }}
+  name: {{ .ClusterName }}-{{ .WorkerOspRole }}
+  namespace: openshift-machine-api
+spec:
+  replicas: {{ .Workers }}
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: {{ .ClusterName }}
+      machine.openshift.io/cluster-api-machineset: {{ .ClusterName }}-{{ .WorkerOspRole }}
+  template:
+    metadata:
+      labels:
+        machine.openshift.io/cluster-api-cluster: {{ .ClusterName }}
+        machine.openshift.io/cluster-api-machine-role: {{ .WorkerOspRole }}
+        machine.openshift.io/cluster-api-machine-type: {{ .WorkerOspRole }}
+        machine.openshift.io/cluster-api-machineset: {{ .ClusterName }}-{{ .WorkerOspRole }}
+    spec:
+      providerSpec:
+        value:
+          hostSelector: {}
+          image:
+            checksum: {{ .RhcosImageUrl }}.md5sum
+            url: {{ .RhcosImageUrl }}
+          metadata:
+          userData:
+            name: {{ .WorkerOspRole }}-user-data

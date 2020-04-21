@@ -1,0 +1,11 @@
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: compute-node-operator
+subjects:
+- kind: ServiceAccount
+  name: compute-node-operator
+roleRef:
+  kind: ClusterRole
+  name: compute-node-operator
+  apiGroup: rbac.authorization.k8s.io

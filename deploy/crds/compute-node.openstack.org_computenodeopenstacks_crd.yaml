@@ -1,0 +1,88 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: computenodeopenstacks.compute-node.openstack.org
+spec:
+  group: compute-node.openstack.org
+  names:
+    kind: ComputeNodeOpenStack
+    listKind: ComputeNodeOpenStackList
+    plural: computenodeopenstacks
+    singular: computenodeopenstack
+  scope: Namespaced
+  subresources:
+    status: {}
+  validation:
+    openAPIV3Schema:
+      description: ComputeNodeOpenStack is the Schema for the computenodeopenstacks
+        API
+      properties:
+        apiVersion:
+          description: 'APIVersion defines the versioned schema of this representation
+            of an object. Servers should convert recognized schemas to the latest
+            internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+          type: string
+        kind:
+          description: 'Kind is a string value representing the REST resource this
+            object represents. Servers may infer this from the endpoint the client
+            submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+          type: string
+        metadata:
+          type: object
+        spec:
+          description: ComputeNodeOpenStackSpec defines the desired state of ComputeNodeOpenStack
+          properties:
+            apiIntIp:
+              description: Internal Cluster API IP (app-int)
+              type: string
+            baseWorkerMachineSetName:
+              description: Base Worker MachineSet Name
+              type: string
+            clusterName:
+              description: Cluster name
+              type: string
+            corePinning:
+              description: Cores Pinning
+              type: string
+            infraDaemonSets:
+              description: Infra DaemonSets needed
+              items:
+                description: InfraDaemonSet defines the daemon set required
+                properties:
+                  name:
+                    description: Name
+                    type: string
+                  namespace:
+                    description: Namespace
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+              type: array
+            k8sServiceIp:
+              description: Kubernetes service cluster IP
+              type: string
+            roleName:
+              description: Name of the worker role created for OSP computes
+              type: string
+            workers:
+              description: Number of workers
+              format: int32
+              type: integer
+          required:
+          - apiIntIp
+          - baseWorkerMachineSetName
+          - clusterName
+          - k8sServiceIp
+          - roleName
+          type: object
+        status:
+          description: ComputeNodeOpenStackStatus defines the observed state of ComputeNodeOpenStack
+          type: object
+      type: object
+  version: v1alpha1
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true

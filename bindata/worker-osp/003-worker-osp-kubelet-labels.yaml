@@ -1,0 +1,37 @@
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  annotations:
+  labels:
+    machineconfiguration.openshift.io/role: {{ .WorkerOspRole }}
+  name: 03-{{ .WorkerOspRole }}-kubelet-labels
+spec:
+  config:
+    ignition:
+      version: 2.2.0
+    systemd:
+      units:
+      - enabled: true
+        name: kubelet.service
+        dropins:
+        - name: 01-change-kubelet-labels.conf
+          contents: |
+            [Service]
+            ExecStart=
+            ExecStart=/usr/bin/hyperkube \
+                kubelet \
+                  --config=/etc/kubernetes/kubelet.conf \
+                  --bootstrap-kubeconfig=/etc/kubernetes/kubeconfig \
+                  --kubeconfig=/var/lib/kubelet/kubeconfig \
+                  --container-runtime=remote \
+                  --container-runtime-endpoint=/var/run/crio/crio.sock \
+                  --node-labels=node-role.kubernetes.io/worker,node-role.kubernetes.io/{{ .WorkerOspRole }},node.openshift.io/os_id=${ID},beta.kubernetes.io/os=osp \
+                  --register-with-taints=dedicated={{ .WorkerOspRole }}:NoSchedule \
+                  --node-ip="${KUBELET_NODE_IP}" \
+                  --address="${KUBELET_NODE_IP}" \
+                  --minimum-container-ttl-duration=6m0s \
+                  --volume-plugin-dir=/etc/kubernetes/kubelet-plugins/volume/exec \
+                  --cloud-provider= \
+                   \
+                  --v=${KUBELET_LOG_LEVEL}
+  fips: false

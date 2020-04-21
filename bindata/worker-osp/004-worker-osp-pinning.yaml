@@ -1,0 +1,14 @@
+{{if .Pinning}}
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  labels:
+    machineconfiguration.openshift.io/role: {{ .WorkerOspRole }}
+  name: 05-{{ .WorkerOspRole }}-pinning
+spec:
+  config:
+    ignition:
+      version: 2.2.0
+  kernelArguments:
+    - isolcpus={{ .CorePinning }}
+{{- end}}
