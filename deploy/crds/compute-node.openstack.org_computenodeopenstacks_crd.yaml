@@ -79,6 +79,40 @@ spec:
           type: object
         status:
           description: ComputeNodeOpenStackStatus defines the observed state of ComputeNodeOpenStack
+          properties:
+            infraDaemonSets:
+              description: Infra DaemonSets created
+              items:
+                description: InfraDaemonSet defines the daemon set required
+                properties:
+                  name:
+                    description: Name
+                    type: string
+                  namespace:
+                    description: Namespace
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+              type: array
+            readyWorkers:
+              description: Number of ready workers
+              format: int32
+              type: integer
+            specMDS:
+              description: Applied Spec
+              type: string
+            workers:
+              description: 'Important: Run "operator-sdk generate k8s" to regenerate
+                code after modifying this file Add custom validation using kubebuilder
+                tags: https://book-v1.book.kubebuilder.io/beyond_basics/generating_crd.html
+                Number of requested workers'
+              format: int32
+              type: integer
+          required:
+          - specMDS
+          - workers
           type: object
       type: object
   version: v1alpha1

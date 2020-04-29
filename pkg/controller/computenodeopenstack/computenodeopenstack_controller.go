@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/pkg/apis/computenode/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -29,6 +29,7 @@ import (
 
 	"github.com/openstack-k8s-operators/compute-node-operator/pkg/render"
 	"github.com/openstack-k8s-operators/compute-node-operator/pkg/apply"
+	"github.com/openstack-k8s-operators/compute-node-operator/pkg/util"
 
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 )
@@ -121,6 +122,24 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		return reconcile.Result{}, err
 	}
 
+	specMDS, err := util.CalculateHash(instance.Spec)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if reflect.DeepEqual(specMDS, instance.Status.SpecMDS){
+		// TO DO, just adding some sample code!
+		
+		// No need to reapply the spec, but we need to do the reconciliation of the readyWorkers
+		instance.Status.ReadyWorkers = instance.Spec.Workers - 1
+		err := r.client.Status().Update(context.TODO(), instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		return reconcile.Result{}, nil
+	}
+
+	// Need to reapply the spec
+
 	// Fill all defaults explicitly
 	data, err := getRenderData(context.TODO(), r.client, instance)
 	if err != nil {
@@ -149,11 +168,24 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		}
 	}
 
+	/* Only create the new ones, deleting the old ones not needed anymore
 	// create node-exporter daemonset (to have monitoring information)
 	// create machine-config-daemon daemonset(to allow reconfigurations)
 	// create multus daemonset (to set the node to ready)
-	if err := createInfraDaemonsets(context.TODO(), r.kclient, instance); err != nil {
-		log.Error(err, "Failed to create the infra daemon sets")
+	*/
+	if !reflect.DeepEqual(instance.Spec.InfraDaemonSets, instance.Status.InfraDaemonSets){
+		if err := ensureInfraDaemonsets(context.TODO(), r.kclient, instance); err != nil {
+			log.Error(err, "Failed to create the infra daemon sets")
+			return reconcile.Result{}, err
+		}
+	}
+
+	// Update Status
+	instance.Status.Workers = instance.Spec.Workers
+	instance.Status.InfraDaemonSets = instance.Spec.InfraDaemonSets
+	instance.Status.SpecMDS = specMDS
+	err = r.client.Status().Update(context.TODO(), instance)
+	if err != nil {
 		return reconcile.Result{}, err
 	}
 
@@ -202,7 +234,8 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	return data, nil
 }
 
-func createInfraDaemonsets(ctx context.Context, client kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+func ensureInfraDaemonsets(ctx context.Context, client kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	// Create/Update the required ones
 	for _, dsInfo := range instance.Spec.InfraDaemonSets {
 		originDaemonSet := &appsv1.DaemonSet{}
 		originDaemonSet, err := client.AppsV1().DaemonSets(dsInfo.Namespace).Get(dsInfo.Name, metav1.GetOptions{})
@@ -230,14 +263,33 @@ func createInfraDaemonsets(ctx context.Context, client kubernetes.Interface, ins
 				// Updating the Daemonset
 				ds := newDaemonSet(instance, originDaemonSet, ospDaemonSetName, dsInfo.Namespace)
 				// Merge the desired object with what actually exists
-				if !equality.Semantic.DeepEqual(ospDaemonSet.Spec, ds.Spec) {
-					//if err := client.Update(ctx, ds); err != nil {
+				if !reflect.DeepEqual(ospDaemonSet.Spec, ds.Spec) {
 					_, err := client.AppsV1().DaemonSets(dsInfo.Namespace).Update(ds)
 					if err != nil {
 						log.Error(err, "could not update object", ospDaemonSetName)
 						return err
 					}
 				}
+			}
+		}
+	}
+	// Remove the extra ones
+	for _, statusDsInfo := range instance.Status.InfraDaemonSets {
+		existing := false
+		for _, specDsInfo := range instance.Spec.InfraDaemonSets {
+			if reflect.DeepEqual(statusDsInfo, specDsInfo) {
+				existing = true
+				break
+			}
+		}
+		if !existing {
+			ospDaemonSetName := statusDsInfo.Name + "-" + instance.Spec.RoleName
+			err := client.AppsV1().DaemonSets(statusDsInfo.Namespace).Delete(ospDaemonSetName, &metav1.DeleteOptions{})
+			if err != nil && errors.IsNotFound(err) {
+				// Already deleted
+				continue
+			} else if err != nil {
+				return err
 			}
 		}
 	}

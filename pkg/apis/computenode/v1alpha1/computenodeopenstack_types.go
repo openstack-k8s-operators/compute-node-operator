@@ -4,9 +4,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // ComputeNodeOpenStackSpec defines the desired state of ComputeNodeOpenStack
 type ComputeNodeOpenStackSpec struct {
 	// Name of the worker role created for OSP computes
@@ -37,9 +34,16 @@ type InfraDaemonSet struct {
 
 // ComputeNodeOpenStackStatus defines the observed state of ComputeNodeOpenStack
 type ComputeNodeOpenStackStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
 	// Add custom validation using kubebuilder tags: https://book-v1.book.kubebuilder.io/beyond_basics/generating_crd.html
+	// Number of requested workers
+	Workers int32 `json:"workers"`
+	// Number of ready workers
+	ReadyWorkers int32 `json:"readyWorkers,omitempty"`
+	// Infra DaemonSets created
+	InfraDaemonSets []InfraDaemonSet `json:"infraDaemonSets,omitempty"`
+	// Applied Spec
+	SpecMDS string `json:"specMDS"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

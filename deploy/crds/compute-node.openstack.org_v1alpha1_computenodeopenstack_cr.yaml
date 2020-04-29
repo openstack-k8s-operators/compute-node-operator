@@ -10,7 +10,7 @@ spec:
   baseWorkerMachineSetName: ostest-worker-0
   k8sServiceIp: 172.30.0.1
   apiIntIp: 192.168.111.5
-  workers: 0
+  workers: 1
   corePinning: "4-7"
   infraDaemonSets:
   - name: multus
