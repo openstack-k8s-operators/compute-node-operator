@@ -14,9 +14,9 @@ import (
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ApplyObject applies the desired object against the apiserver,
+// Object applies the desired object against the apiserver,
 // merging it with any existing objects if already present.
-func ApplyObject(ctx context.Context, client k8sclient.Client, obj *uns.Unstructured) error {
+func Object(ctx context.Context, client k8sclient.Client, obj *uns.Unstructured) error {
 	name := obj.GetName()
 	namespace := obj.GetNamespace()
 	if name == "" {
@@ -53,9 +53,8 @@ func ApplyObject(ctx context.Context, client k8sclient.Client, obj *uns.Unstruct
 	if !equality.Semantic.DeepEqual(existing, obj) {
 		if err := client.Update(ctx, obj); err != nil {
 			return errors.Wrapf(err, "could not update object %s", objDesc)
-		} else {
-			log.Printf("update was successful")
 		}
+		log.Printf("update was successful")
 	}
 
 	return nil

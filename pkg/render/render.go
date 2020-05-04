@@ -16,21 +16,23 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
-type RenderData struct {
+// Data struct
+type Data struct {
 	Funcs template.FuncMap
 	Data  map[string]interface{}
 }
 
-func MakeRenderData() RenderData {
-	return RenderData{
+// MakeData func
+func MakeData() Data {
+	return Data{
 		Funcs: template.FuncMap{},
 		Data:  map[string]interface{}{},
 	}
 }
 
-// RenderDir will render all manifests in a directory, descending in to subdirectories
-// It will perform template substitutions based on the data supplied by the RenderData
-func RenderDir(manifestDir string, d *RenderData) ([]*unstructured.Unstructured, error) {
+// ManifestDir will render all manifests in a directory, descending in to subdirectories
+// It will perform template substitutions based on the data supplied by the Data
+func ManifestDir(manifestDir string, d *Data) ([]*unstructured.Unstructured, error) {
 	out := []*unstructured.Unstructured{}
 
 	if err := filepath.Walk(manifestDir, func(path string, info os.FileInfo, err error) error {
@@ -46,7 +48,7 @@ func RenderDir(manifestDir string, d *RenderData) ([]*unstructured.Unstructured,
 			return nil
 		}
 
-		objs, err := RenderTemplate(path, d)
+		objs, err := Template(path, d)
 		if err != nil {
 			return err
 		}
@@ -59,9 +61,9 @@ func RenderDir(manifestDir string, d *RenderData) ([]*unstructured.Unstructured,
 	return out, nil
 }
 
-// RenderTemplate reads, renders, and attempts to parse a yaml or
+// Template reads, renders, and attempts to parse a yaml or
 // json file representing one or more k8s api objects
-func RenderTemplate(path string, d *RenderData) ([]*unstructured.Unstructured, error) {
+func Template(path string, d *Data) ([]*unstructured.Unstructured, error) {
 	tmpl := template.New(path).Option("missingkey=error")
 	if d.Funcs != nil {
 		tmpl.Funcs(d.Funcs)

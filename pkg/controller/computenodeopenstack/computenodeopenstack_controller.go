@@ -141,14 +141,14 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	// Need to reapply the spec
 
 	// Fill all defaults explicitly
-	data, err := getRenderData(context.TODO(), r.client, instance)
+	data, err := getData(context.TODO(), r.client, instance)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
 	// Generate the objects
 	objs := []*uns.Unstructured{}
-	manifests, err := render.RenderDir(filepath.Join(ManifestPath, "worker-osp"), &data)
+	manifests, err := render.ManifestDir(filepath.Join(ManifestPath, "worker-osp"), &data)
 	if err != nil {
 		log.Error(err, "Failed to render manifests : %v")
 		return reconcile.Result{}, err
@@ -162,7 +162,7 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		obj.SetOwnerReferences([]metav1.OwnerReference{*oref})			
 
 		// Open question: should an error here indicate we will never retry?
-		if err := apply.ApplyObject(context.TODO(), r.client, obj); err != nil {
+		if err := apply.Object(context.TODO(), r.client, obj); err != nil {
 			log.Error(err, "Failed to apply objects")	
 			return reconcile.Result{}, err
 		}
@@ -193,12 +193,12 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 }
 
 
-func getRenderData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (render.RenderData, error)  {
-	data := render.MakeRenderData()
+func getData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (render.Data, error)  {
+	data := render.MakeData()
 	data.Data["ClusterName"] = instance.Spec.ClusterName
 	data.Data["WorkerOspRole"] = instance.Spec.RoleName
-	data.Data["K8sServiceIp"] = instance.Spec.K8sServiceIp
-	data.Data["ApiIntIp"] = instance.Spec.ApiIntIp
+	data.Data["K8sServiceIP"] = instance.Spec.K8sServiceIP
+	data.Data["APIIntIP"] = instance.Spec.APIIntIP
 	data.Data["Workers"] = instance.Spec.Workers
 	if instance.Spec.CorePinning == "" {
 		data.Data["Pinning"] = false
