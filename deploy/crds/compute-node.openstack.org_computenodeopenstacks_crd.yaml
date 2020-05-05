@@ -96,6 +96,22 @@ spec:
                 - namespace
                 type: object
               type: array
+            nodes:
+              description: Nodes information
+              items:
+                description: Node defines the status of the associated nodes
+                properties:
+                  name:
+                    description: Node name
+                    type: string
+                  status:
+                    description: Node status
+                    type: string
+                required:
+                - name
+                - status
+                type: object
+              type: array
             readyWorkers:
               description: Number of ready workers
               format: int32

@@ -27,8 +27,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	"github.com/openstack-k8s-operators/compute-node-operator/pkg/render"
 	"github.com/openstack-k8s-operators/compute-node-operator/pkg/apply"
+	"github.com/openstack-k8s-operators/compute-node-operator/pkg/render"
 	"github.com/openstack-k8s-operators/compute-node-operator/pkg/util"
 
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
@@ -74,8 +74,14 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
-	// TODO(user): Modify this to be the types you create that are owned by the primary resource
-	// Watch for changes to secondary resource Pods and requeue the owner ComputeNodeOpenStack
+	err = c.Watch(&source.Kind{Type: &machinev1beta1.MachineSet{}},&handler.EnqueueRequestForOwner{
+		IsController: true,
+		OwnerType:    &computenodev1alpha1.ComputeNodeOpenStack{},
+	})
+	if err != nil {
+		return err
+	}
+
 	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &computenodev1alpha1.ComputeNodeOpenStack{},
@@ -94,8 +100,8 @@ var _ reconcile.Reconciler = &ReconcileComputeNodeOpenStack{}
 type ReconcileComputeNodeOpenStack struct {
 	// This client, initialized using mgr.Client() above, is a split client
 	// that reads objects from the cache and writes to the apiserver
-	client client.Client
-	scheme *runtime.Scheme
+	client  client.Client
+	scheme  *runtime.Scheme
 	kclient kubernetes.Interface
 }
 
@@ -126,12 +132,8 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	if reflect.DeepEqual(specMDS, instance.Status.SpecMDS){
-		// TO DO, just adding some sample code!
-		
-		// No need to reapply the spec, but we need to do the reconciliation of the readyWorkers
-		instance.Status.ReadyWorkers = instance.Spec.Workers - 1
-		err := r.client.Status().Update(context.TODO(), instance)
+	if reflect.DeepEqual(specMDS, instance.Status.SpecMDS) {
+		err := updateNodesStatus(r.client, instance)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -139,7 +141,6 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	}
 
 	// Need to reapply the spec
-
 	// Fill all defaults explicitly
 	data, err := getRenderData(context.TODO(), r.client, instance)
 	if err != nil {
@@ -159,11 +160,11 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	for _, obj := range objs {
 		// Set ComputeOpenStack instance as the owner and controller
 		oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
-		obj.SetOwnerReferences([]metav1.OwnerReference{*oref})			
+		obj.SetOwnerReferences([]metav1.OwnerReference{*oref})
 
 		// Open question: should an error here indicate we will never retry?
 		if err := apply.ApplyObject(context.TODO(), r.client, obj); err != nil {
-			log.Error(err, "Failed to apply objects")	
+			log.Error(err, "Failed to apply objects")
 			return reconcile.Result{}, err
 		}
 	}
@@ -173,7 +174,7 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	// create machine-config-daemon daemonset(to allow reconfigurations)
 	// create multus daemonset (to set the node to ready)
 	*/
-	if !reflect.DeepEqual(instance.Spec.InfraDaemonSets, instance.Status.InfraDaemonSets){
+	if !reflect.DeepEqual(instance.Spec.InfraDaemonSets, instance.Status.InfraDaemonSets) {
 		if err := ensureInfraDaemonsets(context.TODO(), r.kclient, instance); err != nil {
 			log.Error(err, "Failed to create the infra daemon sets")
 			return reconcile.Result{}, err
@@ -192,8 +193,7 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	return reconcile.Result{}, nil
 }
 
-
-func getRenderData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (render.RenderData, error)  {
+func getRenderData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (render.RenderData, error) {
 	data := render.MakeRenderData()
 	data.Data["ClusterName"] = instance.Spec.ClusterName
 	data.Data["WorkerOspRole"] = instance.Spec.RoleName
@@ -319,9 +319,9 @@ func newDaemonSet(instance *computenodev1alpha1.ComputeNodeOpenStack, ds *appsv1
 	// Add toleration
 	tolerationSpec := corev1.Toleration{
 		Operator: "Equal",
-		Effect: "NoSchedule",
-		Key: "dedicated",
-		Value: instance.Spec.RoleName,
+		Effect:   "NoSchedule",
+		Key:      "dedicated",
+		Value:    instance.Spec.RoleName,
 	}
 	daemonSet.Spec.Template.Spec.Tolerations = append(daemonSet.Spec.Template.Spec.Tolerations, tolerationSpec)
 
@@ -330,4 +330,212 @@ func newDaemonSet(instance *computenodev1alpha1.ComputeNodeOpenStack, ds *appsv1
 	daemonSet.Spec.Template.Spec.NodeSelector = map[string]string{nodeSelector: ""}
 
 	return &daemonSet
+}
+
+func updateNodesStatus(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	nodeList := &corev1.NodeList{}
+	workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
+	listOpts := []client.ListOption{
+		client.MatchingLabels{workerLabel: ""},
+	}
+	err := c.List(context.TODO(), nodeList, listOpts...)
+	if err != nil {
+		return err
+	}
+
+	var readyWorkers int32 = 0
+	nodesStatus := []computenodev1alpha1.Node{}
+	for _, node := range nodeList.Items {
+		nodeStatus := getNodeStatus(&node)
+		previousNodeStatus := getPreviousNodeStatus(node.Name, instance)
+
+		switch previousNodeStatus {
+		case "None":
+			if nodeStatus == "SchedulingDisabled" {
+				// Node being removed
+				break
+			}
+			// add node to status and create blocker pod
+			newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+			nodesStatus = append(nodesStatus, newNode)
+			err = createBlockerPod(c, node.Name, instance)
+			if err != nil {
+				return err
+			}
+			// if nodestatus is ready, update readyWorkers
+			if nodeStatus == "Ready" {
+				readyWorkers += 1
+			}
+		case "NotReady":
+			if nodeStatus == "Ready" {
+				readyWorkers += 1
+				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+				nodesStatus = append(nodesStatus, newNode)
+
+			} else if nodeStatus == "SchedulingDisabled" {
+				err = deleteBlockerPodFinalizer(c, node.Name, instance)
+			}
+		case "Ready":
+			newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+			nodesStatus = append(nodesStatus, newNode)
+
+			if nodeStatus == "Ready" {
+				readyWorkers += 1
+			} else if nodeStatus == "SchedulingDisabled" {
+				// trigger drain (new pod)
+				err = triggerNodeDrain(c, node.Name, instance)
+				if err != nil {
+					return err
+				}
+			}
+		case "SchedulingDisabled":
+			// if drain has finished (pod completed) remove blocker-pod finalizer
+			drained, err := isNodeDrained(c, node.Name, instance)
+			if err != nil {
+				return err
+			}
+			if drained {
+				err = deleteBlockerPodFinalizer(c, node.Name, instance)
+				if err != nil {
+					return err
+				}
+			} else {
+				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+				nodesStatus = append(nodesStatus, newNode)
+			}
+		}
+	}
+
+	instance.Status.ReadyWorkers = readyWorkers
+	instance.Status.Nodes = nodesStatus
+	err = c.Status().Update(context.TODO(), instance)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func getNodeStatus(node *corev1.Node) string {
+	if node.Spec.Unschedulable {
+		return "SchedulingDisabled"
+	}
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == "Ready" {
+			if condition.Status == "True" {
+				return "Ready"
+			} else {
+				return "NotReady"
+			}
+
+		}
+	}
+	// This should not be possible
+	return "None"
+}
+
+func getPreviousNodeStatus(nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) string {
+	for _, node := range instance.Status.Nodes {
+		if node.Name == nodeName {
+			return node.Status
+		}
+	}
+	return "None"
+}
+
+func createBlockerPod(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nodeName + "-blocker-pod",
+			Namespace: instance.Namespace,
+			Finalizers: []string{
+				"compute-node.openstack.org/" + instance.Spec.RoleName,
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:    nodeName + "-blocker-pod",
+				Image:   "busybox",
+				Command: []string{"/bin/sh", "-ec", "sleep infinity"},
+			}},
+			RestartPolicy: "Always",
+			HostNetwork:   true,
+			NodeSelector: map[string]string{
+				"kubernetes.io/hostname": nodeName,
+			},
+			Tolerations: []corev1.Toleration{{
+				Operator: "Exists",
+			}},
+		},
+	}
+	oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
+	pod.SetOwnerReferences([]metav1.OwnerReference{*oref})
+	if err := c.Create(context.TODO(), pod); err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+func deleteBlockerPodFinalizer(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	podName := nodeName + "-blocker-pod"
+	pod := &corev1.Pod{}
+	err := c.Get(context.TODO(), types.NamespacedName{Name: podName, Namespace: instance.Namespace}, pod)
+	if err != nil && errors.IsNotFound(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	//remove finalizer
+	pod.Finalizers = []string{}
+	err = c.Update(context.TODO(), pod)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	// TO DO: This needs to be changed with a pod (job) that does the actual draining
+
+	// Creating a simple pod that sleeps for 5 mins for testing purposes
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nodeName + "-drain-pod",
+			Namespace: instance.Namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:    nodeName + "-drain-pod",
+				Image:   "busybox",
+				Command: []string{"/bin/sh", "-ec", "sleep 300"},
+			}},
+			RestartPolicy: "Never",
+		},
+	}
+	oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
+	pod.SetOwnerReferences([]metav1.OwnerReference{*oref})
+	if err := c.Create(context.TODO(), pod); err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+func isNodeDrained(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) (bool, error) {
+	podName := nodeName + "-drain-pod"
+	pod := &corev1.Pod{}
+	err := c.Get(context.TODO(), types.NamespacedName{Name: podName, Namespace: instance.Namespace}, pod)
+	if err != nil && errors.IsNotFound(err) {
+		return true, nil
+	} else if err != nil {
+		return false, err
+	}
+
+	if pod.Status.Phase == "Succeeded" {
+		err = c.Delete(context.TODO(), pod)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }

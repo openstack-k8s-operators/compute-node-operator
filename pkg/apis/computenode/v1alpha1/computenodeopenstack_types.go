@@ -32,6 +32,14 @@ type InfraDaemonSet struct {
 	Name string `json:"name"`
 }
 
+// Node defines the status of the associated nodes
+type Node struct {
+	// Node name
+	Name string `json:"name"`
+	// Node status
+	Status string `json:"status"`
+}
+
 // ComputeNodeOpenStackStatus defines the observed state of ComputeNodeOpenStack
 type ComputeNodeOpenStackStatus struct {
 	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
@@ -44,6 +52,8 @@ type ComputeNodeOpenStackStatus struct {
 	InfraDaemonSets []InfraDaemonSet `json:"infraDaemonSets,omitempty"`
 	// Applied Spec
 	SpecMDS string `json:"specMDS"`
+	// Nodes information
+	Nodes []Node `json:"nodes,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
