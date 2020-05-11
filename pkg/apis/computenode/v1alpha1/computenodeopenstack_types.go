@@ -34,6 +34,8 @@ type ComputeNodeOpenStackSpec struct {
 	Compute NovaCompute `json:"compute,omitempty"`
 	// Network/Neutron configuration
 	Network NeutronNetwork `json:"network,omitempty"`
+	// Manage selinux - Defaults to false
+	SelinuxDisabled bool `json:"selinuxDisabled,omitempty"`
 }
 
 // InfraDaemonSet defines the daemon set required
@@ -69,7 +71,7 @@ type NovaCompute struct {
 
 // NeutronNetwork defines neutron configuration parameters
 type NeutronNetwork struct {
-	Nic				 string `json:"nic"`
+	Nic              string      `json:"nic"`
 	BridgeMappings   string      `json:"bridgeMappings,omitempty"`
 	MechanishDrivers string      `json:"mechanismDrivers,omitempty"`
 	ServicePlugings  string      `json:"servicePlugins,omitempty"`

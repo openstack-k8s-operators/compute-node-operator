@@ -387,6 +387,14 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 		data.Data["Nic"] = instance.Spec.Network.Nic
 	}
 
+	// disable selinux if set
+	// TODO use performance tuning operator for this when implemented for cpu pinning, ...
+	data.Data["SelinuxDisabled"] = false
+	if instance.Spec.SelinuxDisabled {
+		data.Data["SelinuxDisabled"] = true
+		log.Info(fmt.Sprintf("SELINUX will be DISABLED for worker role: %s!!", data.Data["WorkerOspRole"]))
+	}
+
 	// get it from openshift-machine-api secrets (assumes worker-user-data)
 	userData := &corev1.Secret{}
 	err := client.Get(context.TODO(), types.NamespacedName{Name: "worker-user-data", Namespace: "openshift-machine-api"}, userData)

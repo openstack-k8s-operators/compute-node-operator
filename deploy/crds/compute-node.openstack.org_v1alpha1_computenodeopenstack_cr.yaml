@@ -11,6 +11,7 @@ spec:
   k8sServiceIP: 172.30.0.1
   apiIntIP: 192.168.111.5
   workers: 0
+  selinuxDisabled: true
   compute:
     novaComputeCPUDedicatedSet: "4-7"
     novaComputeCPUSharedSet: "0-3"
