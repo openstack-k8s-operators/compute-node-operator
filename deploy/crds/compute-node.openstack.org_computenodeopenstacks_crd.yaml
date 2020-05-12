@@ -44,6 +44,22 @@ spec:
             corePinning:
               description: Cores Pinning
               type: string
+            drain:
+              description: Node draining configuration options
+              properties:
+                drainPodImage:
+                  description: Image used for drain pod which performs compute removal,
+                    this is usually an image which has the openstackclient and osc-placement
+                    packages installed.
+                  type: string
+                enabled:
+                  description: 'Automatic draining (live migrate off instances) of
+                    the node, global switch, which can be overwritten on per Node
+                    base using NodeToDelete struct. Default: false'
+                  type: boolean
+              required:
+              - drainPodImage
+              type: object
             infraDaemonSets:
               description: Infra DaemonSets needed
               items:
@@ -79,6 +95,16 @@ spec:
                 - name
                 type: object
               type: array
+            openStackClientAdminSecret:
+              description: user secrets used to connect to OpenStack API via openstackclient
+              type: string
+            openStackClientConfigMap:
+              description: openstackclient configmap which holds information to connect
+                to OpenStack API
+              type: string
+            openStackNamespace:
+              description: Namespace OpenStack resources are created, default openstack
+              type: string
             roleName:
               description: Name of the worker role created for OSP computes
               type: string
@@ -90,7 +116,10 @@ spec:
           - apiIntIp
           - baseWorkerMachineSetName
           - clusterName
+          - drain
           - k8sServiceIp
+          - openStackClientAdminSecret
+          - openStackClientConfigMap
           - roleName
           type: object
         status:

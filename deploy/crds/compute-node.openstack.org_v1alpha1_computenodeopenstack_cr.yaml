@@ -19,3 +19,9 @@ spec:
     namespace: openshift-monitoring
   - name: machine-config-daemon
     namespace: openshift-machine-config-operator
+  drain:
+    drainPodImage: quay.io/openstack-k8s-operators/tripleo-deploy
+    enabled: false
+  openStackClientAdminSecret: openstackclient-admin
+  openStackClientConfigMap: openstackclient
+  openStackNamespace: openstack

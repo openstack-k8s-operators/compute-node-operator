@@ -24,6 +24,14 @@ type ComputeNodeOpenStackSpec struct {
 	InfraDaemonSets []InfraDaemonSet `json:"infraDaemonSets,omitempty"`
 	// Nodes to delete upon scale down
 	NodesToDelete []NodeToDelete `json:"nodesToDelete,omitempty"`
+	// Namespace OpenStack resources are created, default openstack
+	OpenStackNamespace string `json:"openStackNamespace,omitempty"`
+	// openstackclient configmap which holds information to connect to OpenStack API
+	OpenStackClientConfigMap string `json:"openStackClientConfigMap"`
+	// user secrets used to connect to OpenStack API via openstackclient
+	OpenStackClientAdminSecret string `json:"openStackClientAdminSecret"`
+	// Node draining configuration options
+	Drain DrainParam `json:"drain"`
 }
 
 // InfraDaemonSet defines the daemon set required
@@ -32,6 +40,15 @@ type InfraDaemonSet struct {
 	Namespace string `json:"namespace"`
 	// Name
 	Name string `json:"name"`
+}
+
+// Drain defines global draining specific parameters
+type DrainParam struct {
+	// Automatic draining (live migrate off instances) of the node, global switch, which can be overwritten on per Node base using NodeToDelete struct. Default: false
+	Enabled bool `json:"enabled,omitempty"`
+	// Image used for drain pod which performs compute removal, this is usually
+	// an image which has the openstackclient and osc-placement packages installed.
+	DrainPodImage string `json:"drainPodImage"`
 }
 
 // NodeToDelete defines the name of the node to delete and if automatic drain is needed
