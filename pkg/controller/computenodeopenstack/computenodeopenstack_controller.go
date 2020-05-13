@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/pkg/apis/computenode/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,6 +39,10 @@ var log = logf.Log.WithName("controller_computenodeopenstack")
 
 // ManifestPath is the path to the manifest templates
 var ManifestPath = "./bindata"
+
+// The periodic resync interval.
+// We will re-run the reconciliation logic, even if the configuration hasn't changed.
+var ResyncPeriod = 10 * time.Minute
 
 // Add creates a new ComputeNodeOpenStack Controller and adds it to the Manager. The Manager will set fields on the Controller
 // and Start it when the Manager is Started.
@@ -74,7 +79,7 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
-	err = c.Watch(&source.Kind{Type: &machinev1beta1.MachineSet{}},&handler.EnqueueRequestForOwner{
+	err = c.Watch(&source.Kind{Type: &machinev1beta1.MachineSet{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &computenodev1alpha1.ComputeNodeOpenStack{},
 	})
@@ -133,11 +138,24 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		return reconcile.Result{}, err
 	}
 	if reflect.DeepEqual(specMDS, instance.Status.SpecMDS) {
-		err := updateNodesStatus(r.client, instance)
+		err := ensureMachineSetSync(r.client, instance)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
-		return reconcile.Result{}, nil
+
+		err = updateNodesStatus(r.client, instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		return reconcile.Result{RequeueAfter: ResyncPeriod}, nil
+	}
+
+	// Check if nodes to delete information has changed
+	if !reflect.DeepEqual(instance.Spec.NodesToDelete, instance.Status.NodesToDelete) || instance.Spec.Workers < instance.Status.Workers {
+		err := updateMachineDeletionSelection(r.client, instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	// Need to reapply the spec
@@ -184,13 +202,14 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	// Update Status
 	instance.Status.Workers = instance.Spec.Workers
 	instance.Status.InfraDaemonSets = instance.Spec.InfraDaemonSets
+	instance.Status.NodesToDelete = instance.Spec.NodesToDelete
 	instance.Status.SpecMDS = specMDS
 	err = r.client.Status().Update(context.TODO(), instance)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
-	return reconcile.Result{}, nil
+	return reconcile.Result{RequeueAfter: ResyncPeriod}, nil
 }
 
 func getRenderData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (render.RenderData, error) {
@@ -399,6 +418,21 @@ func updateNodesStatus(c client.Client, instance *computenodev1alpha1.ComputeNod
 				if err != nil {
 					return err
 				}
+
+				for i, nodeToDelete := range instance.Spec.NodesToDelete {
+					if nodeToDelete.Name == node.Name {
+						if len(instance.Spec.NodesToDelete) == 1 {
+							instance.Spec.NodesToDelete = []computenodev1alpha1.NodeToDelete{}
+						} else {
+							instance.Spec.NodesToDelete = removeNode(instance.Spec.NodesToDelete, i)
+						}
+						err = c.Update(context.TODO(), instance)
+						if err != nil {
+							return err
+						}
+						break
+					}
+				}
 			} else {
 				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 				nodesStatus = append(nodesStatus, newNode)
@@ -413,6 +447,11 @@ func updateNodesStatus(c client.Client, instance *computenodev1alpha1.ComputeNod
 		return err
 	}
 	return nil
+}
+
+func removeNode(nodes []computenodev1alpha1.NodeToDelete, i int) []computenodev1alpha1.NodeToDelete {
+	nodes[i] = nodes[len(nodes)-1]
+	return nodes[:len(nodes)-1]
 }
 
 func getNodeStatus(node *corev1.Node) string {
@@ -445,7 +484,7 @@ func getPreviousNodeStatus(nodeName string, instance *computenodev1alpha1.Comput
 func createBlockerPod(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: nodeName + "-blocker-pod",
+			Name:      nodeName + "-blocker-pod",
 			Namespace: instance.Namespace,
 			Finalizers: []string{
 				"compute-node.openstack.org/" + instance.Spec.RoleName,
@@ -496,18 +535,28 @@ func deleteBlockerPodFinalizer(c client.Client, nodeName string, instance *compu
 
 func triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
 	// TO DO: This needs to be changed with a pod (job) that does the actual draining
+	sleepTime := "infinity"
 
+	// Example to handle drain information
+	//for _, nodeToDelete := range instance.Spec.NodesToDelete {
+	//	if nodeToDelete.Name == nodeName {
+	//		if nodeToDelete.Drain {
+	//			sleepTime = "600"
+	//		}
+	//		break
+	//	}
+	//}
 	// Creating a simple pod that sleeps for 5 mins for testing purposes
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: nodeName + "-drain-pod",
+			Name:      nodeName + "-drain-pod",
 			Namespace: instance.Namespace,
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
 				Name:    nodeName + "-drain-pod",
 				Image:   "busybox",
-				Command: []string{"/bin/sh", "-ec", "sleep 300"},
+				Command: []string{"/bin/sh", "-ec", "sleep " + sleepTime},
 			}},
 			RestartPolicy: "Never",
 		},
@@ -538,4 +587,78 @@ func isNodeDrained(c client.Client, nodeName string, instance *computenodev1alph
 		return true, nil
 	}
 	return false, nil
+}
+
+func updateMachineDeletionSelection(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	// We need to delete the old cluster-api-delete-machine labels and add the new ones
+	nodesToDeleteInfo := make(map[string]string)
+	for _, newNode := range instance.Spec.NodesToDelete {
+		nodesToDeleteInfo[newNode.Name] = "Add"
+	}
+	for _, oldNode := range instance.Status.NodesToDelete {
+		_, exists := nodesToDeleteInfo[oldNode.Name]
+		if exists {
+			delete(nodesToDeleteInfo, oldNode.Name)
+		} else {
+			nodesToDeleteInfo[oldNode.Name] = "Remove"
+		}
+	}
+	machineList := &machinev1beta1.MachineList{}
+	listOpts := []client.ListOption{
+		client.InNamespace("openshift-machine-api"),
+		client.MatchingLabels{"machine.openshift.io/cluster-api-machine-role": instance.Spec.RoleName},
+	}
+	err := c.List(context.TODO(), machineList, listOpts...)
+	if err != nil {
+		return err
+	}
+	annotations := map[string]string{}
+	for _, machine := range machineList.Items {
+		if machine.Status.NodeRef == nil {
+			continue
+		}
+
+		machineNode := machine.Status.NodeRef.Name
+		action, exists := nodesToDeleteInfo[machineNode]
+		if !exists {
+			continue
+		}
+
+		if action == "Add" {
+			annotations["machine.openshift.io/cluster-api-delete-machine"] = "1"
+			machine.SetAnnotations(annotations)
+		} else if action == "Remove" {
+			annotations["machine.openshift.io/cluster-api-delete-machine"] = "0"
+			machine.SetAnnotations(annotations)
+		}
+		if err := c.Update(context.TODO(), &machine); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureMachineSetSync(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	// get replicas at the openshift-machine-api machineset
+	workerMachineSet := &machinev1beta1.MachineSet{}
+	machineSetName := instance.Spec.ClusterName + "-" + instance.Spec.RoleName
+	err := c.Get(context.TODO(), types.NamespacedName{Name: machineSetName, Namespace: "openshift-machine-api"}, workerMachineSet)
+	if err != nil && !errors.IsNotFound(err) {
+		// MachineSet has been deleted, force recreation but with 0 replicas
+		instance.Spec.Workers = 0
+		if err := c.Update(context.TODO(), instance); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		if *workerMachineSet.Spec.Replicas != instance.Spec.Workers {
+			// MachineSet has been updated, force CRD re-sync to match the machineset replicas
+			instance.Spec.Workers = *workerMachineSet.Spec.Replicas
+			if err := c.Update(context.TODO(), instance); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

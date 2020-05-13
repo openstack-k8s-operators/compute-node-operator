@@ -63,6 +63,22 @@ spec:
             k8sServiceIp:
               description: Kubernetes service cluster IP
               type: string
+            nodesToDelete:
+              description: Nodes to delete upon scale down
+              items:
+                description: NodeToDelete defines the name of the node to delete and
+                  if automatic drain is needed
+                properties:
+                  drain:
+                    description: Automatic draining of the node
+                    type: boolean
+                  name:
+                    description: Node Name
+                    type: string
+                required:
+                - name
+                type: object
+              type: array
             roleName:
               description: Name of the worker role created for OSP computes
               type: string
@@ -110,6 +126,22 @@ spec:
                 required:
                 - name
                 - status
+                type: object
+              type: array
+            nodesToDelete:
+              description: Nodes to delete upon scale down
+              items:
+                description: NodeToDelete defines the name of the node to delete and
+                  if automatic drain is needed
+                properties:
+                  drain:
+                    description: Automatic draining of the node
+                    type: boolean
+                  name:
+                    description: Node Name
+                    type: string
+                required:
+                - name
                 type: object
               type: array
             readyWorkers:

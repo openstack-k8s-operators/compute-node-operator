@@ -22,6 +22,8 @@ type ComputeNodeOpenStackSpec struct {
 	CorePinning string `json:"corePinning,omitempty"`
 	// Infra DaemonSets needed
 	InfraDaemonSets []InfraDaemonSet `json:"infraDaemonSets,omitempty"`
+	// Nodes to delete upon scale down
+	NodesToDelete []NodeToDelete `json:"nodesToDelete,omitempty"`
 }
 
 // InfraDaemonSet defines the daemon set required
@@ -30,6 +32,14 @@ type InfraDaemonSet struct {
 	Namespace string `json:"namespace"`
 	// Name
 	Name string `json:"name"`
+}
+
+// NodeToDelete defines the name of the node to delete and if automatic drain is needed
+type NodeToDelete struct {
+	// Node Name
+	Name string `json:"name"`
+	// Automatic draining of the node
+	Drain bool `json:"drain,omitempty"`
 }
 
 // Node defines the status of the associated nodes
@@ -54,6 +64,8 @@ type ComputeNodeOpenStackStatus struct {
 	SpecMDS string `json:"specMDS"`
 	// Nodes information
 	Nodes []Node `json:"nodes,omitempty"`
+	// Nodes to delete upon scale down
+	NodesToDelete []NodeToDelete `json:"nodesToDelete,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
