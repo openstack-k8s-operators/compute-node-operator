@@ -9,6 +9,7 @@ metadata:
   namespace: openshift-machine-api
 spec:
   replicas: {{ .Workers }}
+  deletePolicy: Newest
   selector:
     matchLabels:
       machine.openshift.io/cluster-api-cluster: {{ .ClusterName }}
