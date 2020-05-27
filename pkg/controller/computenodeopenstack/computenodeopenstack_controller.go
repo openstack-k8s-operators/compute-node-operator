@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +12,10 @@ import (
 	"time"
 
 	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/pkg/apis/computenode/v1alpha1"
+	computenodeopenstack "github.com/openstack-k8s-operators/compute-node-operator/pkg/computenodeopenstack"
+	libcommonutil "github.com/openstack-k8s-operators/lib-common/pkg/util"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -87,7 +92,16 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
-	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{
+	err = c.Watch(&source.Kind{Type: &batchv1.Job{}}, &handler.EnqueueRequestForOwner{
+		IsController: true,
+		OwnerType:    &computenodev1alpha1.ComputeNodeOpenStack{},
+	})
+	if err != nil {
+		return err
+	}
+
+	// Watch ConfigMaps owned by ComputeNodeOpenStack
+	err = c.Watch(&source.Kind{Type: &corev1.ConfigMap{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &computenodev1alpha1.ComputeNodeOpenStack{},
 	})
@@ -133,17 +147,36 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		return reconcile.Result{}, err
 	}
 
+	// ScriptsConfigMap
+	err = ensureComputeNodeOpenStackScriptsConfigMap(r, instance, strings.ToLower(instance.Kind)+"-scripts")
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// openStackClientAdminSecret and openStackClientConfigMap are expected to exist in
+	// openStackNamespace namespace. Default "openstack"
+	// mschuppert - note: 	the format of the secret/configmap might change when the OSP controller
+	//			operators who in the end should populate this information are done. So
+	//			likely changes are expected.
+	openStackNamespace := "openstack"
+	if instance.Spec.OpenStackNamespace != "" {
+		openStackNamespace = instance.Spec.OpenStackNamespace
+	}
+	openStackClientAdmin, openStackClient, err := getOpenStackClientInformation(r.kclient, instance, openStackNamespace)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
 	specMDS, err := util.CalculateHash(instance.Spec)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 	if reflect.DeepEqual(specMDS, instance.Status.SpecMDS) {
-		err := ensureMachineSetSync(r.client, instance)
+		err = ensureMachineSetSync(r.client, instance)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
-
-		err = updateNodesStatus(r.client, instance)
+		err = updateNodesStatus(r.client, r.kclient, instance, openStackClientAdmin, openStackClient)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -197,6 +230,7 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 			log.Error(err, "Failed to create the infra daemon sets")
 			return reconcile.Result{}, err
 		}
+		reqLogger.Info("Created InfraDaemonSets")
 	}
 
 	// Update Status
@@ -351,7 +385,8 @@ func newDaemonSet(instance *computenodev1alpha1.ComputeNodeOpenStack, ds *appsv1
 	return &daemonSet
 }
 
-func updateNodesStatus(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
+
 	nodeList := &corev1.NodeList{}
 	workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
 	listOpts := []client.ListOption{
@@ -365,13 +400,16 @@ func updateNodesStatus(c client.Client, instance *computenodev1alpha1.ComputeNod
 	var readyWorkers int32 = 0
 	nodesStatus := []computenodev1alpha1.Node{}
 	for _, node := range nodeList.Items {
+		log.Info(fmt.Sprintf("Update node status for node: %s", node.Name))
 		nodeStatus := getNodeStatus(&node)
 		previousNodeStatus := getPreviousNodeStatus(node.Name, instance)
 
 		switch previousNodeStatus {
 		case "None":
+			log.Info(fmt.Sprintf("Previous status None: %s", node.Name))
 			if nodeStatus == "SchedulingDisabled" {
 				// Node being removed
+
 				break
 			}
 			// add node to status and create blocker pod
@@ -384,8 +422,10 @@ func updateNodesStatus(c client.Client, instance *computenodev1alpha1.ComputeNod
 			// if nodestatus is ready, update readyWorkers
 			if nodeStatus == "Ready" {
 				readyWorkers += 1
+				log.Info(fmt.Sprintf("Compute worker node added: %s", node.Name))
 			}
 		case "NotReady":
+			log.Info(fmt.Sprintf("Previous status NotReady: %s", node.Name))
 			if nodeStatus == "Ready" {
 				readyWorkers += 1
 				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
@@ -395,45 +435,99 @@ func updateNodesStatus(c client.Client, instance *computenodev1alpha1.ComputeNod
 				err = deleteBlockerPodFinalizer(c, node.Name, instance)
 			}
 		case "Ready":
+			log.Info(fmt.Sprintf("Previous status Ready: %s", node.Name))
 			newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 			nodesStatus = append(nodesStatus, newNode)
 
 			if nodeStatus == "Ready" {
 				readyWorkers += 1
-			} else if nodeStatus == "SchedulingDisabled" {
-				// trigger drain (new pod)
-				err = triggerNodeDrain(c, node.Name, instance)
-				if err != nil {
-					return err
-				}
 			}
 		case "SchedulingDisabled":
-			// if drain has finished (pod completed) remove blocker-pod finalizer
-			drained, err := isNodeDrained(c, node.Name, instance)
+			log.Info(fmt.Sprintf("Previous status SchedulingDisabled: %s", node.Name))
+			// trigger node drain pre tasks (new pod)
+			err = triggerNodePreDrain(c, node.Name, instance, openstackClientAdmin, openstackClient)
 			if err != nil {
 				return err
 			}
-			if drained {
-				err = deleteBlockerPodFinalizer(c, node.Name, instance)
+
+			// if pre draining has finished (job completed) remove blocker-pod finalizer
+			drainedPre, err := isNodeDrained(c, node.Name, node.Name+"-drain-job-pre", instance)
+			if err != nil && errors.IsNotFound(err) {
+				return fmt.Errorf("Pre NodeDrain job IsNotFound: %s", node.Name+"-drain-job-pre")
+			} else if err != nil {
+				return err
+			}
+
+			log.Info(fmt.Sprintf("Pre draining job: %s", drainedPre))
+			switch drainedPre {
+			case "succeeded":
+				// taint node that daemonset pods get stopped
+				// since we loop over the nodes in status update we need to
+				// 1) taint the node to have OSP pods stopped
+				// 2) run post drain job
+				// 3) remove blocker pod to get node finally removed
+				err = addToBeRemovedTaint(kclient, node)
 				if err != nil {
 					return err
 				}
 
-				for i, nodeToDelete := range instance.Spec.NodesToDelete {
-					if nodeToDelete.Name == node.Name {
-						if len(instance.Spec.NodesToDelete) == 1 {
-							instance.Spec.NodesToDelete = []computenodev1alpha1.NodeToDelete{}
-						} else {
-							instance.Spec.NodesToDelete = removeNode(instance.Spec.NodesToDelete, i)
-						}
-						err = c.Update(context.TODO(), instance)
-						if err != nil {
-							return err
-						}
-						break
-					}
+				// trigger node drain post tasks (new pod)
+				err = triggerNodePostDrain(c, node.Name, instance, openstackClientAdmin, openstackClient)
+				if err != nil {
+					return err
 				}
-			} else {
+
+				// if post draining has finished (job completed) remove the pod
+				drainedPost, err := isNodeDrained(c, node.Name, node.Name+"-drain-job-post", instance)
+				if err != nil && errors.IsNotFound(err) {
+					return fmt.Errorf("Post NodeDrain job IsNotFound: %s", node.Name+"-drain-job-post")
+				} else if err != nil {
+					return err
+				}
+				log.Info(fmt.Sprintf("NodeDrainPost status: %v ", drainedPost))
+				switch drainedPost {
+				case "succeeded":
+					log.Info(fmt.Sprintf("NodeDrainPost job succeeded: %s", node.Name+"-drain-job-post"))
+					// Delete draining jobs
+					err = deleteJobWithName(c, instance, node.Name+"-drain-job-pre")
+					if err != nil && !errors.IsNotFound(err) {
+						return err
+					}
+					err = deleteJobWithName(c, instance, node.Name+"-drain-job-post")
+					if err != nil && !errors.IsNotFound(err) {
+						return err
+					}
+
+					// delete blocker pod to proceed with node removal from OCP
+					err = deleteBlockerPodFinalizer(c, node.Name, instance)
+					if err != nil {
+						return err
+					}
+
+					for i, nodeToDelete := range instance.Spec.NodesToDelete {
+						if nodeToDelete.Name == node.Name {
+							if len(instance.Spec.NodesToDelete) == 1 {
+								instance.Spec.NodesToDelete = []computenodev1alpha1.NodeToDelete{}
+							} else {
+								instance.Spec.NodesToDelete = removeNode(instance.Spec.NodesToDelete, i)
+							}
+							err = c.Update(context.TODO(), instance)
+							if err != nil {
+								return err
+							}
+							break
+						}
+					}
+					log.Info(fmt.Sprintf("Node %v successfully removed", node.Name))
+				default:
+					// return reconcile
+					return nil
+				}
+			case "active":
+				// return reconcile
+				log.Info(fmt.Sprintf("NodeDrainPre job active: %s", node.Name+"-drain-job-pre"))
+				return nil
+			default:
 				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 				nodesStatus = append(nodesStatus, newNode)
 			}
@@ -530,63 +624,174 @@ func deleteBlockerPodFinalizer(c client.Client, nodeName string, instance *compu
 	if err != nil {
 		return err
 	}
+	log.Info(fmt.Sprintf("Node blocker pod deleted, node: %v, pod: %v", nodeName, podName))
 	return nil
 }
 
-func triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
-	// TO DO: This needs to be changed with a pod (job) that does the actual draining
-	sleepTime := "infinity"
-
-	// Example to handle drain information
-	//for _, nodeToDelete := range instance.Spec.NodesToDelete {
-	//	if nodeToDelete.Name == nodeName {
-	//		if nodeToDelete.Drain {
-	//			sleepTime = "600"
-	//		}
-	//		break
-	//	}
-	//}
-	// Creating a simple pod that sleeps for 5 mins for testing purposes
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      nodeName + "-drain-pod",
-			Namespace: instance.Namespace,
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{
-				Name:    nodeName + "-drain-pod",
-				Image:   "busybox",
-				Command: []string{"/bin/sh", "-ec", "sleep " + sleepTime},
-			}},
-			RestartPolicy: "Never",
-		},
-	}
-	oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
-	pod.SetOwnerReferences([]metav1.OwnerReference{*oref})
-	if err := c.Create(context.TODO(), pod); err != nil && !errors.IsAlreadyExists(err) {
+func triggerNodePreDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
+	err := _triggerNodeDrain(c, nodeName, instance, true, openstackClientAdmin, openstackClient)
+	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func isNodeDrained(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) (bool, error) {
-	podName := nodeName + "-drain-pod"
-	pod := &corev1.Pod{}
-	err := c.Get(context.TODO(), types.NamespacedName{Name: podName, Namespace: instance.Namespace}, pod)
-	if err != nil && errors.IsNotFound(err) {
-		return true, nil
-	} else if err != nil {
-		return false, err
+func triggerNodePostDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
+	err := _triggerNodeDrain(c, nodeName, instance, false, openstackClientAdmin, openstackClient)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, runPreTasks bool, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
+
+	var scriptsVolumeDefaultMode int32 = 0755
+
+	envVars := []corev1.EnvVar{
+		{
+			Name:  "SCALE_DOWN_NODE_NAME",
+			Value: nodeName,
+		},
 	}
 
-	if pod.Status.Phase == "Succeeded" {
-		err = c.Delete(context.TODO(), pod)
-		if err != nil {
-			return false, err
-		}
-		return true, nil
+	// Env vars to connect to openstack endpoints
+	// mschuppert - note: 	the format of the secret/configmap might change when the OSP controller
+	//			operators who in the end should populate this information are done. So
+	//			likely changes are expected.
+	// From ConfigMap
+	for env, v := range openstackClient.Data {
+		envVars = append(envVars, corev1.EnvVar{Name: env, Value: v})
 	}
-	return false, nil
+	// From Secret
+	for env, v := range openstackClientAdmin.Data {
+		envVars = append(envVars, corev1.EnvVar{Name: env, Value: string(v)})
+	}
+
+	// Example to handle drain information
+	enableLiveMigration := "false"
+	if instance.Spec.Drain.Enabled {
+		enableLiveMigration = fmt.Sprintf("%v", instance.Spec.Drain.Enabled)
+
+	}
+
+	for _, nodeToDelete := range instance.Spec.NodesToDelete {
+		if nodeToDelete.Name == nodeName {
+			if nodeToDelete.Drain {
+				enableLiveMigration = fmt.Sprintf("%v", nodeToDelete.Drain)
+			}
+			break
+		}
+	}
+	envVars = append(envVars, corev1.EnvVar{Name: "LIVE_MIGRATION_ENABLED", Value: enableLiveMigration})
+
+	volumes := []corev1.Volume{
+		{
+			Name: strings.ToLower(instance.Kind) + "-scripts",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					DefaultMode: &scriptsVolumeDefaultMode,
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: strings.ToLower(instance.Kind) + "-scripts",
+					},
+				},
+			},
+		},
+	}
+
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      strings.ToLower(instance.Kind) + "-scripts",
+			ReadOnly:  true,
+			MountPath: "/usr/local/bin",
+		},
+	}
+
+	jobName := ""
+	containerCommand := ""
+	if runPreTasks {
+		jobName = nodeName + "-drain-job-pre"
+		containerCommand = "/usr/local/bin/scaledownpre.sh"
+	} else {
+		jobName = nodeName + "-drain-job-post"
+		containerCommand = "/usr/local/bin/scaledownpost.sh"
+	}
+
+	var completions int32 = 1
+	var parallelism int32 = 1
+	var backoffLimit int32 = 20
+	oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
+
+	// Create job that runs the scale task
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            jobName,
+			Namespace:       instance.Namespace,
+			OwnerReferences: []metav1.OwnerReference{*oref},
+		},
+		Spec: batchv1.JobSpec{
+			Completions:  &completions,
+			Parallelism:  &parallelism,
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            jobName,
+					Namespace:       instance.Namespace,
+					OwnerReferences: []metav1.OwnerReference{*oref},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  jobName,
+						Image: instance.Spec.Drain.DrainPodImage,
+						// TODO: mschuppert - Right now this is not a kolla container.
+						// When this is moved to a kolla based container, we should use
+						// the kolla_start procedure
+						Command:      []string{containerCommand},
+						Env:          envVars,
+						VolumeMounts: volumeMounts,
+					}},
+					Volumes:       volumes,
+					RestartPolicy: "OnFailure",
+				},
+			},
+		},
+	}
+
+	if err := c.Create(context.TODO(), job); err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	} else if errors.IsAlreadyExists(err) {
+		log.Info(fmt.Sprintf("Drain job already present: %v", jobName))
+	} else {
+		log.Info(fmt.Sprintf("Drain job created: %v", jobName))
+	}
+	return nil
+}
+
+func isNodeDrained(c client.Client, nodeName string, jobName string, instance *computenodev1alpha1.ComputeNodeOpenStack) (string, error) {
+	job := &batchv1.Job{}
+	err := c.Get(context.TODO(), types.NamespacedName{Name: jobName, Namespace: instance.Namespace}, job)
+	if err != nil {
+		return "", err
+	}
+
+	if job.Status.Succeeded == 1 {
+		log.Info(fmt.Sprintf("NodeDrain job suceeded: %s", job.Name))
+		return "succeeded", nil
+	} else if job.Status.Active >= 1 {
+		log.Info(fmt.Sprintf("NodeDrain job still running: %s", job.Name))
+		return "active", nil
+	}
+
+	// if job is not succeeded or active, return type and reason as error from first conditions
+	// to log and reconcile
+	conditionsType := ""
+	conditionsReason := ""
+	if len(job.Status.Conditions) > 0 {
+		conditionsType = string(job.Status.Conditions[0].Type)
+		conditionsReason = job.Status.Conditions[0].Reason
+	}
+
+	return "", fmt.Errorf("nodeDrain job type %v, reason: %v", conditionsType, conditionsReason)
 }
 
 func updateMachineDeletionSelection(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
@@ -661,4 +866,117 @@ func ensureMachineSetSync(c client.Client, instance *computenodev1alpha1.Compute
 		}
 	}
 	return nil
+}
+
+func addToBeRemovedTaint(kclient kubernetes.Interface, node corev1.Node) error {
+
+	var taintEffectNoExecute = corev1.TaintEffectNoExecute
+
+	// check if the taint already exists
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == "StopDaemonSetPods" {
+
+			// don't need to re-add the taint
+			log.Info(fmt.Sprintf("StopDaemonSetPods taint already present on node %v", node.Name))
+			return nil
+		}
+	}
+
+	node.Spec.Taints = append(node.Spec.Taints, corev1.Taint{
+		Key:    "StopDaemonSetPods",
+		Value:  fmt.Sprint(time.Now().Unix()),
+		Effect: taintEffectNoExecute,
+	})
+
+	updatedNode, err := kclient.CoreV1().Nodes().Update(&node)
+	if err != nil || updatedNode == nil {
+		return fmt.Errorf("failed to update node %v after adding taint: %v", node.Name, err)
+	}
+
+	log.Info(fmt.Sprintf("StopDaemonSetPods taint added on node %v", node.Name))
+	return nil
+}
+
+func deleteJobWithName(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack, jobName string) error {
+	job := &batchv1.Job{}
+	err := c.Get(context.TODO(), types.NamespacedName{Name: jobName, Namespace: instance.Namespace}, job)
+	if err != nil {
+		return err
+	}
+
+	if job.Status.Succeeded == 1 {
+		err = c.Delete(context.TODO(), job)
+		if err != nil {
+			return fmt.Errorf("failed to delete drain job: %v", job.Name, err)
+		}
+		log.Info("Deleted NodeDrain job: " + job.Name)
+	}
+
+	return nil
+}
+
+func ensureComputeNodeOpenStackScriptsConfigMap(r *ReconcileComputeNodeOpenStack, instance *computenodev1alpha1.ComputeNodeOpenStack, name string) error {
+	scriptsConfigMap := computenodeopenstack.ScriptsConfigMap(instance, name)
+
+	// Check if this ScriptsConfigMap already exists
+	foundScriptsConfigMap := &corev1.ConfigMap{}
+	err := r.client.Get(context.TODO(), types.NamespacedName{Name: scriptsConfigMap.Name, Namespace: scriptsConfigMap.Namespace}, foundScriptsConfigMap)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info(fmt.Sprintf("Creating a new ScriptsConfigMap - Namespace: %s, Config Map name: %s", scriptsConfigMap.Namespace, scriptsConfigMap.Name))
+		if err := controllerutil.SetControllerReference(instance, scriptsConfigMap, r.scheme); err != nil {
+			return err
+		}
+
+		err = r.client.Create(context.TODO(), scriptsConfigMap)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Calc hashes of existing ConfigMap and Data coming with image to see if we need to update
+		// the scripts in the existing ConfigMap
+		scriptsConfigMapDataHash, err := libcommonutil.ObjectHash(scriptsConfigMap.Data)
+		if err != nil {
+			return fmt.Errorf("error calculating scriptsConfigMapDataHash hash: %v", err)
+		}
+
+		foundScriptsConfigMapDataHash, err := libcommonutil.ObjectHash(foundScriptsConfigMap.Data)
+		if err != nil {
+			return fmt.Errorf("error calculating foundScriptsConfigMapDataHash hash: %v", err)
+		}
+
+		if scriptsConfigMapDataHash != foundScriptsConfigMapDataHash {
+			log.Info(fmt.Sprintf("Updating ScriptsConfigMap"))
+			// if scripts got update in operator image, also update the existing configmap
+			foundScriptsConfigMap.Data = scriptsConfigMap.Data
+			err = r.client.Update(context.TODO(), foundScriptsConfigMap)
+			if err != nil {
+				return err
+			}
+			log.Info(fmt.Sprintf("ScriptsConfigMap updated - New Data Hash: %s", scriptsConfigMapDataHash))
+		}
+	}
+	return nil
+}
+
+func getOpenStackClientInformation(kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, namespace string) (*corev1.Secret, *corev1.ConfigMap, error) {
+
+	openStackClientAdminSecret := instance.Spec.OpenStackClientAdminSecret
+	openStackClientConfigMap := instance.Spec.OpenStackClientConfigMap
+
+	// check for Secret with information required for scale down tasks to connect to the OpenStack API
+	openstackClientAdmin := &corev1.Secret{}
+	// Check if secret holding the admin information for connection to the api endpoints exist
+	openstackClientAdmin, err := kclient.CoreV1().Secrets(namespace).Get(openStackClientAdminSecret, metav1.GetOptions{})
+	if err != nil && errors.IsNotFound(err) {
+		return nil, nil, fmt.Errorf("Failed to find the secret holding admin user information required to connect to the OSP API endpoints: %v", err)
+	}
+
+	// check for ConfigMap with information required for scale down tasks to connect to the OpenStack API
+	openstackClient := &corev1.ConfigMap{}
+	// Check if configmap holding the information for connection to the api endpoints exist
+	openstackClient, err = kclient.CoreV1().ConfigMaps(namespace).Get(openStackClientConfigMap, metav1.GetOptions{})
+	if err != nil && errors.IsNotFound(err) {
+		return nil, nil, fmt.Errorf("Failed to find the configmap holding information required to connect to the OSP API endpoints: %v", err)
+	}
+	return openstackClientAdmin, openstackClient, nil
 }
