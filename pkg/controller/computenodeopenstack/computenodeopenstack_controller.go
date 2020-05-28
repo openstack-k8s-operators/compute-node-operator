@@ -409,6 +409,19 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 			log.Info(fmt.Sprintf("Previous status None: %s", node.Name))
 			if nodeStatus == "SchedulingDisabled" {
 				// Node being removed
+				// Delete draining jobs as final step when a compute worker node gets
+				// removed. This is required because SchedulingDisabled is run multiple
+				// times due to reconcile flow and the job gets re-created.
+				err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-pre")
+				if err != nil && !errors.IsNotFound(err) {
+					return err
+				}
+				err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-post")
+				if err != nil && !errors.IsNotFound(err) {
+					return err
+				}
+
+				log.Info(fmt.Sprintf("Node %v successfully removed", node.Name))
 
 				break
 			}
@@ -488,15 +501,6 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 				switch drainedPost {
 				case "succeeded":
 					log.Info(fmt.Sprintf("NodeDrainPost job succeeded: %s", node.Name+"-drain-job-post"))
-					// Delete draining jobs
-					err = deleteJobWithName(c, instance, node.Name+"-drain-job-pre")
-					if err != nil && !errors.IsNotFound(err) {
-						return err
-					}
-					err = deleteJobWithName(c, instance, node.Name+"-drain-job-post")
-					if err != nil && !errors.IsNotFound(err) {
-						return err
-					}
 
 					// delete blocker pod to proceed with node removal from OCP
 					err = deleteBlockerPodFinalizer(c, node.Name, instance)
@@ -518,7 +522,6 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 							break
 						}
 					}
-					log.Info(fmt.Sprintf("Node %v successfully removed", node.Name))
 				default:
 					// return reconcile
 					return nil
@@ -897,7 +900,7 @@ func addToBeRemovedTaint(kclient kubernetes.Interface, node corev1.Node) error {
 	return nil
 }
 
-func deleteJobWithName(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack, jobName string) error {
+func deleteJobWithName(c client.Client, kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, jobName string) error {
 	job := &batchv1.Job{}
 	err := c.Get(context.TODO(), types.NamespacedName{Name: jobName, Namespace: instance.Namespace}, job)
 	if err != nil {
@@ -905,7 +908,8 @@ func deleteJobWithName(c client.Client, instance *computenodev1alpha1.ComputeNod
 	}
 
 	if job.Status.Succeeded == 1 {
-		err = c.Delete(context.TODO(), job)
+		background := metav1.DeletePropagationBackground
+		err = kclient.BatchV1().Jobs(instance.Namespace).Delete(jobName, &metav1.DeleteOptions{PropagationPolicy: &background})
 		if err != nil {
 			return fmt.Errorf("failed to delete drain job: %v", job.Name, err)
 		}
