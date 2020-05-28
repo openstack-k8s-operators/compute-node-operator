@@ -13,9 +13,9 @@ type ComputeNodeOpenStackSpec struct {
 	// Base Worker MachineSet Name
 	BaseWorkerMachineSetName string `json:"baseWorkerMachineSetName"`
 	// Kubernetes service cluster IP
-	K8sServiceIp string `json:"k8sServiceIp"`
+	K8sServiceIP string `json:"k8sServiceIP"`
 	// Internal Cluster API IP (app-int)
-	ApiIntIp string `json:"apiIntIp"`
+	APIIntIP string `json:"apiIntIP"`
 	// Number of workers
 	Workers int32 `json:"workers,omitempty"`
 	// Cores Pinning
@@ -42,7 +42,7 @@ type InfraDaemonSet struct {
 	Name string `json:"name"`
 }
 
-// Drain defines global draining specific parameters
+// DrainParam defines global draining specific parameters
 type DrainParam struct {
 	// Automatic draining (live migrate off instances) of the node, global switch, which can be overwritten on per Node base using NodeToDelete struct. Default: false
 	Enabled bool `json:"enabled,omitempty"`

@@ -1,4 +1,4 @@
-package render
+package bindatautil
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"strings"
 	"text/template"
 
+	util "github.com/openstack-k8s-operators/compute-node-operator/pkg/util"
+
 	"github.com/Masterminds/sprig"
 	"github.com/pkg/errors"
 
@@ -16,11 +18,13 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
+// RenderData -
 type RenderData struct {
 	Funcs template.FuncMap
 	Data  map[string]interface{}
 }
 
+// MakeRenderData -
 func MakeRenderData() RenderData {
 	return RenderData{
 		Funcs: template.FuncMap{},
@@ -68,7 +72,7 @@ func RenderTemplate(path string, d *RenderData) ([]*unstructured.Unstructured, e
 	}
 
 	// Add universal functions
-	tmpl.Funcs(template.FuncMap{"getOr": getOr, "isSet": isSet})
+	tmpl.Funcs(template.FuncMap{"getOr": util.GetOr, "isSet": util.IsSet})
 	tmpl.Funcs(sprig.TxtFuncMap())
 
 	source, err := ioutil.ReadFile(path)
