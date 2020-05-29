@@ -16,7 +16,8 @@ This is optional, a prebuild operator from quay.io/ltomasbo/compute-operator cou
 
 Build the image, using your custom registry you have write access to
 
-    operator-sdk build <image e.g quay.io/ltomasbo/compute-node-operator:v0.0.X>
+    make # creates a custom csv-generator tool
+    operator-sdk build --image-builder buildah <image e.g quay.io/ltomasbo/compute-node-operator:v0.0.X>
 
 Replace `image:` in deploy/operator.yaml with your custom registry
 
