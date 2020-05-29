@@ -409,20 +409,6 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 			log.Info(fmt.Sprintf("Previous status None: %s", node.Name))
 			if nodeStatus == "SchedulingDisabled" {
 				// Node being removed
-				// Delete draining jobs as final step when a compute worker node gets
-				// removed. This is required because SchedulingDisabled is run multiple
-				// times due to reconcile flow and the job gets re-created.
-				err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-pre")
-				if err != nil && !errors.IsNotFound(err) {
-					return err
-				}
-				err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-post")
-				if err != nil && !errors.IsNotFound(err) {
-					return err
-				}
-
-				log.Info(fmt.Sprintf("Node %v successfully removed", node.Name))
-
 				break
 			}
 			// add node to status and create blocker pod
@@ -458,6 +444,13 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 		case "SchedulingDisabled":
 			log.Info(fmt.Sprintf("Previous status SchedulingDisabled: %s", node.Name))
 			// trigger node drain pre tasks (new pod)
+			finalizerDeleted, err := isBlockerPodFinalizerDeleted(c, node.Name, instance)
+			if err != nil {
+				return err
+			} else if finalizerDeleted {
+				return nil
+			}
+
 			err = triggerNodePreDrain(c, node.Name, instance, openstackClientAdmin, openstackClient)
 			if err != nil {
 				return err
@@ -501,6 +494,14 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 				switch drainedPost {
 				case "succeeded":
 					log.Info(fmt.Sprintf("NodeDrainPost job succeeded: %s", node.Name+"-drain-job-post"))
+					err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-post")
+					if err != nil && !errors.IsNotFound(err) {
+						return err
+					}
+					err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-pre")
+					if err != nil && !errors.IsNotFound(err) {
+						return err
+					}
 
 					// delete blocker pod to proceed with node removal from OCP
 					err = deleteBlockerPodFinalizer(c, node.Name, instance)
@@ -611,6 +612,23 @@ func createBlockerPod(c client.Client, nodeName string, instance *computenodev1a
 	return nil
 }
 
+func isBlockerPodFinalizerDeleted(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) (bool, error) {
+	podName := nodeName + "-blocker-pod"
+	pod := &corev1.Pod{}
+	err := c.Get(context.TODO(), types.NamespacedName{Name: podName, Namespace: instance.Namespace}, pod)
+	if err != nil && errors.IsNotFound(err) {
+		return true, nil
+	} else if err != nil {
+		return false, err
+	}
+
+	if pod.Finalizers == nil {
+		log.Info(fmt.Sprintf("The blocker pod finalizer was already removed. No need to do any further action for: %s", podName))
+		return true, nil
+	}
+	return false, nil
+}
+
 func deleteBlockerPodFinalizer(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
 	podName := nodeName + "-blocker-pod"
 	pod := &corev1.Pod{}
@@ -648,7 +666,6 @@ func triggerNodePostDrain(c client.Client, nodeName string, instance *computenod
 }
 
 func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, runPreTasks bool, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
-
 	var scriptsVolumeDefaultMode int32 = 0755
 
 	envVars := []corev1.EnvVar{
@@ -872,7 +889,6 @@ func ensureMachineSetSync(c client.Client, instance *computenodev1alpha1.Compute
 }
 
 func addToBeRemovedTaint(kclient kubernetes.Interface, node corev1.Node) error {
-
 	var taintEffectNoExecute = corev1.TaintEffectNoExecute
 
 	// check if the taint already exists
@@ -963,7 +979,6 @@ func ensureComputeNodeOpenStackScriptsConfigMap(r *ReconcileComputeNodeOpenStack
 }
 
 func getOpenStackClientInformation(kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, namespace string) (*corev1.Secret, *corev1.ConfigMap, error) {
-
 	openStackClientAdminSecret := instance.Spec.OpenStackClientAdminSecret
 	openStackClientConfigMap := instance.Spec.OpenStackClientConfigMap
 
