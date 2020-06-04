@@ -17,7 +17,7 @@ spec:
 
           [Service]
           Type=oneshot
-          ExecStart=/sbin/iptables -t nat -A OUTPUT -p tcp -d {{ .K8sServiceIp }} --dport 443 -j DNAT --to-destination {{ .ApiIntIp }}:6443
+          ExecStart=/sbin/iptables -t nat -A OUTPUT -p tcp -d {{ .K8sServiceIP }} --dport 443 -j DNAT --to-destination {{ .APIIntIP }}:6443
 
           [Install]
           WantedBy=multi-user.target

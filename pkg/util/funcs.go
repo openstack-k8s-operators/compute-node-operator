@@ -1,11 +1,11 @@
-package render
+package util
 
 // Functions available for all templates
 
-// getOr returns the value of m[key] if it exists, fallback otherwise.
+// GetOr returns the value of m[key] if it exists, fallback otherwise.
 // As a special case, it also returns fallback if the value of m[key] is
 // the empty string
-func getOr(m map[string]interface{}, key, fallback string) interface{} {
+func GetOr(m map[string]interface{}, key, fallback string) interface{} {
 	val, ok := m[key]
 	if !ok {
 		return fallback
@@ -19,9 +19,9 @@ func getOr(m map[string]interface{}, key, fallback string) interface{} {
 	return val
 }
 
-// isSet returns the value of m[key] if key exists, otherwise false
+// IsSet returns the value of m[key] if key exists, otherwise false
 // Different from getOr because it will return zero values.
-func isSet(m map[string]interface{}, key string) interface{} {
+func IsSet(m map[string]interface{}, key string) interface{} {
 	val, ok := m[key]
 	if !ok {
 		return false

@@ -1,4 +1,4 @@
-package apply
+package bindatautil
 
 import (
 	"context"
@@ -53,9 +53,9 @@ func ApplyObject(ctx context.Context, client k8sclient.Client, obj *uns.Unstruct
 	if !equality.Semantic.DeepEqual(existing, obj) {
 		if err := client.Update(ctx, obj); err != nil {
 			return errors.Wrapf(err, "could not update object %s", objDesc)
-		} else {
-			log.Printf("update was successful")
 		}
+		log.Printf("update was successful")
+
 	}
 
 	return nil

@@ -12,7 +12,9 @@ import (
 	"time"
 
 	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/pkg/apis/computenode/v1alpha1"
+	bindatautil "github.com/openstack-k8s-operators/compute-node-operator/pkg/bindata_util"
 	computenodeopenstack "github.com/openstack-k8s-operators/compute-node-operator/pkg/computenodeopenstack"
+	util "github.com/openstack-k8s-operators/compute-node-operator/pkg/util"
 	libcommonutil "github.com/openstack-k8s-operators/lib-common/pkg/util"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -33,10 +35,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	"github.com/openstack-k8s-operators/compute-node-operator/pkg/apply"
-	"github.com/openstack-k8s-operators/compute-node-operator/pkg/render"
-	"github.com/openstack-k8s-operators/compute-node-operator/pkg/util"
-
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 )
 
@@ -45,7 +43,7 @@ var log = logf.Log.WithName("controller_computenodeopenstack")
 // ManifestPath is the path to the manifest templates
 var ManifestPath = "./bindata"
 
-// The periodic resync interval.
+// ResyncPeriod - The periodic resync interval.
 // We will re-run the reconciliation logic, even if the configuration hasn't changed.
 var ResyncPeriod = 10 * time.Minute
 
@@ -200,7 +198,7 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 
 	// Generate the objects
 	objs := []*uns.Unstructured{}
-	manifests, err := render.RenderDir(filepath.Join(ManifestPath, "worker-osp"), &data)
+	manifests, err := bindatautil.RenderDir(filepath.Join(ManifestPath, "worker-osp"), &data)
 	if err != nil {
 		log.Error(err, "Failed to render manifests : %v")
 		return reconcile.Result{}, err
@@ -214,7 +212,7 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		obj.SetOwnerReferences([]metav1.OwnerReference{*oref})
 
 		// Open question: should an error here indicate we will never retry?
-		if err := apply.ApplyObject(context.TODO(), r.client, obj); err != nil {
+		if err := bindatautil.ApplyObject(context.TODO(), r.client, obj); err != nil {
 			log.Error(err, "Failed to apply objects")
 			return reconcile.Result{}, err
 		}
@@ -246,12 +244,12 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	return reconcile.Result{RequeueAfter: ResyncPeriod}, nil
 }
 
-func getRenderData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (render.RenderData, error) {
-	data := render.MakeRenderData()
+func getRenderData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (bindatautil.RenderData, error) {
+	data := bindatautil.MakeRenderData()
 	data.Data["ClusterName"] = instance.Spec.ClusterName
 	data.Data["WorkerOspRole"] = instance.Spec.RoleName
-	data.Data["K8sServiceIp"] = instance.Spec.K8sServiceIp
-	data.Data["ApiIntIp"] = instance.Spec.ApiIntIp
+	data.Data["K8sServiceIP"] = instance.Spec.K8sServiceIP
+	data.Data["APIIntIP"] = instance.Spec.APIIntIP
 	data.Data["Workers"] = instance.Spec.Workers
 	if instance.Spec.CorePinning == "" {
 		data.Data["Pinning"] = false
@@ -420,13 +418,13 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 			}
 			// if nodestatus is ready, update readyWorkers
 			if nodeStatus == "Ready" {
-				readyWorkers += 1
+				readyWorkers++
 				log.Info(fmt.Sprintf("Compute worker node added: %s", node.Name))
 			}
 		case "NotReady":
 			log.Info(fmt.Sprintf("Previous status NotReady: %s", node.Name))
 			if nodeStatus == "Ready" {
-				readyWorkers += 1
+				readyWorkers++
 				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 				nodesStatus = append(nodesStatus, newNode)
 
@@ -439,7 +437,7 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 			nodesStatus = append(nodesStatus, newNode)
 
 			if nodeStatus == "Ready" {
-				readyWorkers += 1
+				readyWorkers++
 			}
 		case "SchedulingDisabled":
 			log.Info(fmt.Sprintf("Previous status SchedulingDisabled: %s", node.Name))
@@ -560,10 +558,8 @@ func getNodeStatus(node *corev1.Node) string {
 		if condition.Type == "Ready" {
 			if condition.Status == "True" {
 				return "Ready"
-			} else {
-				return "NotReady"
 			}
-
+			return "NotReady"
 		}
 	}
 	// This should not be possible
@@ -927,7 +923,7 @@ func deleteJobWithName(c client.Client, kclient kubernetes.Interface, instance *
 		background := metav1.DeletePropagationBackground
 		err = kclient.BatchV1().Jobs(instance.Namespace).Delete(jobName, &metav1.DeleteOptions{PropagationPolicy: &background})
 		if err != nil {
-			return fmt.Errorf("failed to delete drain job: %v", job.Name, err)
+			return fmt.Errorf("failed to delete drain job: %s, %v", job.Name, err)
 		}
 		log.Info("Deleted NodeDrain job: " + job.Name)
 	}

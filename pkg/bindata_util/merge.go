@@ -1,4 +1,4 @@
-package apply
+package bindatautil
 
 import (
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
