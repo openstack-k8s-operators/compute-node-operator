@@ -46,7 +46,8 @@ done
 PLACEMENT_PROVIDER_ID=$(openstack resource provider list -f value \
                           -c uuid --name ${SCALE_DOWN_NODE_NAME})
 while [ -n "${PLACEMENT_PROVIDER_ID}" ]; do
-  openstack resource provider delete ${PLACEMENT_PROVIDER_ID}
+  echo "Deleting resource provider ${PLACEMENT_PROVIDER_ID}"
+  openstack resource provider delete ${PLACEMENT_PROVIDER_ID} || true
   sleep 5
   PLACEMENT_PROVIDER_ID=$(openstack resource provider list -f value \
                             -c uuid --name ${SCALE_DOWN_NODE_NAME})
