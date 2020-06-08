@@ -178,11 +178,8 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		if err != nil {
 			return reconcile.Result{}, err
 		}
-		return reconcile.Result{RequeueAfter: ResyncPeriod}, nil
-	}
-
-	// Check if nodes to delete information has changed
-	if !reflect.DeepEqual(instance.Spec.NodesToDelete, instance.Status.NodesToDelete) || instance.Spec.Workers < instance.Status.Workers {
+	} else if !reflect.DeepEqual(instance.Spec.NodesToDelete, instance.Status.NodesToDelete) || instance.Spec.Workers < instance.Status.Workers {
+		// Check if nodes to delete information has changed
 		err := updateMachineDeletionSelection(r.client, instance)
 		if err != nil {
 			return reconcile.Result{}, err
@@ -223,13 +220,11 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	// create machine-config-daemon daemonset(to allow reconfigurations)
 	// create multus daemonset (to set the node to ready)
 	*/
-	if !reflect.DeepEqual(instance.Spec.InfraDaemonSets, instance.Status.InfraDaemonSets) {
-		if err := ensureInfraDaemonsets(context.TODO(), r.kclient, instance); err != nil {
-			log.Error(err, "Failed to create the infra daemon sets")
-			return reconcile.Result{}, err
-		}
-		reqLogger.Info("Created InfraDaemonSets")
+	if err := ensureInfraDaemonsets(context.TODO(), r.kclient, instance); err != nil {
+		log.Error(err, "Failed to create the infra daemon sets")
+		return reconcile.Result{}, err
 	}
+	reqLogger.Info("Created InfraDaemonSets")
 
 	// Update Status
 	instance.Status.Workers = instance.Spec.Workers
@@ -425,12 +420,12 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 			log.Info(fmt.Sprintf("Previous status NotReady: %s", node.Name))
 			if nodeStatus == "Ready" {
 				readyWorkers++
-				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
-				nodesStatus = append(nodesStatus, newNode)
-
 			} else if nodeStatus == "SchedulingDisabled" {
 				err = deleteBlockerPodFinalizer(c, node.Name, instance)
 			}
+			// add node to status
+			newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+			nodesStatus = append(nodesStatus, newNode)
 		case "Ready":
 			log.Info(fmt.Sprintf("Previous status Ready: %s", node.Name))
 			newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
@@ -446,7 +441,7 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 			if err != nil {
 				return err
 			} else if finalizerDeleted {
-				return nil
+				break
 			}
 
 			err = triggerNodePreDrain(c, node.Name, instance, openstackClientAdmin, openstackClient)
@@ -522,13 +517,13 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 						}
 					}
 				default:
-					// return reconcile
-					return nil
+					newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+					nodesStatus = append(nodesStatus, newNode)
 				}
 			case "active":
-				// return reconcile
 				log.Info(fmt.Sprintf("NodeDrainPre job active: %s", node.Name+"-drain-job-pre"))
-				return nil
+				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+				nodesStatus = append(nodesStatus, newNode)
 			default:
 				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 				nodesStatus = append(nodesStatus, newNode)
@@ -536,11 +531,13 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 		}
 	}
 
-	instance.Status.ReadyWorkers = readyWorkers
-	instance.Status.Nodes = nodesStatus
-	err = c.Status().Update(context.TODO(), instance)
-	if err != nil {
-		return err
+	if !reflect.DeepEqual(instance.Status.Nodes, nodesStatus) {
+		instance.Status.ReadyWorkers = readyWorkers
+		instance.Status.Nodes = nodesStatus
+		err = c.Status().Update(context.TODO(), instance)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
