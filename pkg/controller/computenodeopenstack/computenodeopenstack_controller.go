@@ -861,9 +861,8 @@ func ensureMachineSetSync(c client.Client, instance *computenodev1alpha1.Compute
 	workerMachineSet := &machinev1beta1.MachineSet{}
 	machineSetName := instance.Spec.ClusterName + "-" + instance.Spec.RoleName
 	err := c.Get(context.TODO(), types.NamespacedName{Name: machineSetName, Namespace: "openshift-machine-api"}, workerMachineSet)
-	if err != nil && !errors.IsNotFound(err) {
-		// MachineSet has been deleted, force recreation but with 0 replicas
-		instance.Spec.Workers = 0
+	if err != nil && errors.IsNotFound(err) {
+		log.Info(fmt.Sprintf("Machineset not found, recreate it: %s osp-worker nodes: %d", machineSetName, instance.Spec.Workers))
 		if err := c.Update(context.TODO(), instance); err != nil {
 			return err
 		}
