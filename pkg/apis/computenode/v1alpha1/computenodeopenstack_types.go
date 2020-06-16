@@ -97,6 +97,12 @@ type Node struct {
 	Status string `json:"status"`
 }
 
+// DisabledNode list the already disabled nodes in OSP
+type DisabledNode struct {
+	// Node Name
+	Name string `json:"name"`
+}
+
 // ComputeNodeOpenStackStatus defines the observed state of ComputeNodeOpenStack
 type ComputeNodeOpenStackStatus struct {
 	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
@@ -113,6 +119,8 @@ type ComputeNodeOpenStackStatus struct {
 	Nodes []Node `json:"nodes,omitempty"`
 	// Nodes to delete upon scale down
 	NodesToDelete []NodeToDelete `json:"nodesToDelete,omitempty"`
+	// DisabledNodes imformation
+	DisabledNodes []DisabledNode `json:"disabledNode,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

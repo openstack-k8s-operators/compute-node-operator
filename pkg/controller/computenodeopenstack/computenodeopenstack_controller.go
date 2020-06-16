@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,6 +40,11 @@ import (
 )
 
 var log = logf.Log.WithName("controller_computenodeopenstack")
+
+const (
+	machineRoleKey                     = "machine.openshift.io/cluster-api-machine-role"
+	disableNovaComputeServiceJobPrefix = "disable-nova-compute-service-"
+)
 
 // ManifestPath is the path to the manifest templates
 var ManifestPath = "./bindata"
@@ -107,6 +113,51 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
+	// watch for machine delete events and filter on machineset with ref.Kind == ComputeNodeOpenStack
+	deletedOspWorkersFn := handler.ToRequestsFunc(func(o handler.MapObject) []reconcile.Request {
+		cc := mgr.GetClient()
+		result := []reconcile.Request{}
+		m := &machinev1beta1.Machine{}
+		key := client.ObjectKey{Namespace: o.Meta.GetNamespace(), Name: o.Meta.GetName()}
+		err := cc.Get(context.Background(), key, m)
+		if err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Unable to retrieve Machine %v")
+			return nil
+		}
+
+		deletionTimestamp := o.Meta.GetDeletionTimestamp()
+		if deletionTimestamp != nil {
+			mss := util.GetMachineSetsForMachine(cc, m)
+			if len(mss) == 0 {
+				log.Info(fmt.Sprintf("Machine %s could not be mapped to any machineset", o.Meta.GetName()))
+				return nil
+			}
+			for _, ms := range mss {
+				for _, ref := range ms.ObjectMeta.GetOwnerReferences() {
+
+					if ref.Controller != nil && ref.Kind == "ComputeNodeOpenStack" {
+						log.Info(fmt.Sprintf("Machine object %s marked for deletion: %s", o.Meta.GetName(), deletionTimestamp))
+						// return namespace and ref.Name
+						name := client.ObjectKey{
+							Namespace: ms.Namespace,
+							Name:      ref.Name,
+						}
+						result = append(result, reconcile.Request{NamespacedName: name})
+					}
+				}
+			}
+			return result
+		}
+		return nil
+	})
+
+	err = c.Watch(&source.Kind{Type: &machinev1beta1.Machine{}}, &handler.EnqueueRequestsFromMapFunc{
+		ToRequests: deletedOspWorkersFn,
+	})
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -160,6 +211,42 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		return reconcile.Result{}, err
 	}
 
+	// Disable nova-compute service early if nodes are tagged as deleted
+	disableWorkerNodes, err := getDeletedOspWorkerNodes(r.client, instance)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if len(disableWorkerNodes) > 0 && !reflect.DeepEqual(instance.Status.DisabledNodes, disableWorkerNodes) {
+		// run job to disable nova-compute service in OSP
+		err := disableNovaComputeService(r.client, disableWorkerNodes, instance, openStackClientAdmin, openStackClient)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		// add disableWorkerNodes to CR status to not rerun if no new nodes got flagged to be deleted
+		// sort node information to not change status if order changes
+		sort.Slice(disableWorkerNodes, func(i, j int) bool {
+			return disableWorkerNodes[i].Name < disableWorkerNodes[j].Name
+		})
+		instance.Status.DisabledNodes = disableWorkerNodes
+		err = r.client.Status().Update(context.TODO(), instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+	} else if len(disableWorkerNodes) == 0 {
+		// remove deleted nodes from CR status
+		instance.Status.DisabledNodes = []computenodev1alpha1.DisabledNode{}
+		err = r.client.Status().Update(context.TODO(), instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		// delete previous finished disable-nova-compute-service job
+		disableComputeServiceJobName := disableNovaComputeServiceJobPrefix + instance.Spec.RoleName
+		err = util.DeleteJobWithName(r.client, r.kclient, instance, disableComputeServiceJobName)
+		if err != nil && !errors.IsNotFound(err) {
+			return reconcile.Result{}, err
+		}
+	}
+
 	specMDS, err := util.CalculateHash(instance.Spec)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -169,13 +256,13 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		if err != nil {
 			return reconcile.Result{}, err
 		}
-		err = updateNodesStatus(r.client, r.kclient, instance, openStackClientAdmin, openStackClient)
+		err := updateNodesStatus(r.client, r.kclient, instance, openStackClientAdmin, openStackClient)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
 	} else if !reflect.DeepEqual(instance.Spec.NodesToDelete, instance.Status.NodesToDelete) || instance.Spec.Workers < instance.Status.Workers {
 		// Check if nodes to delete information has changed
-		err := updateMachineDeletionSelection(r.client, instance)
+		err = updateMachineDeletionSelection(r.client, instance)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -412,6 +499,8 @@ func newDaemonSet(instance *computenodev1alpha1.ComputeNodeOpenStack, ds *appsv1
 	return &daemonSet
 }
 
+// updateNodesStatus - return true if we should reconcil. Right now this is set when
+// we scale down and not all nodes are in SchedulingDisabled state.
 func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
 
 	// With the operator watching multiple namespaces provided as a list the c client
@@ -469,8 +558,24 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 				break
 			}
 
+			// Wait until job to disable nova-compute services finished
+			disableComputeServiceJobName := disableNovaComputeServiceJobPrefix + instance.Spec.RoleName
+			disableComputeServiceJobCompleted, err := util.IsJobDone(c, disableComputeServiceJobName, instance)
+			if err != nil && errors.IsNotFound(err) {
+				return fmt.Errorf("Disable nova-compute job IsNotFound: %s", disableComputeServiceJobName)
+			} else if err != nil {
+				return err
+			}
+			if !disableComputeServiceJobCompleted {
+				// add node to status
+				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+				nodesStatus = append(nodesStatus, newNode)
+				break
+			}
+			log.Info(fmt.Sprintf("Disable compute service job completed: %t", disableComputeServiceJobCompleted))
+
 			/* Steps to delete the drain the node
-			1. Predraining: disable nova service, (optional) migrate VMs, wait until there is no VMs
+			1. Predraining: verify nova service is disabled, (optional) migrate VMs, wait until there is no VMs
 			2. Postdraining: taint the node, remove nova-compute from nova services and placement
 			3. Remove cleanup jobs, blocker pod finalizer, and update nodesToDelete status information
 			*/
@@ -479,13 +584,13 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 			if err != nil {
 				return err
 			}
-			log.Info(fmt.Sprintf("Pre draining job completed: %t", nodePreDrained))
 			if !nodePreDrained {
 				// add node to status
 				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 				nodesStatus = append(nodesStatus, newNode)
 				break
 			}
+			log.Info(fmt.Sprintf("Pre draining job completed: %t", nodePreDrained))
 
 			// 2. NodePostDrain
 			// a) taint the node to have OSP pods stopped
@@ -498,21 +603,21 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 			if err != nil {
 				return err
 			}
-			log.Info(fmt.Sprintf("Post draining job completed: %t", nodePostDrained))
 			if !nodePostDrained {
 				// add node to status
 				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 				nodesStatus = append(nodesStatus, newNode)
 				break
 			}
+			log.Info(fmt.Sprintf("Post draining job completed: %t", nodePostDrained))
 
 			// 3. Cleanup
 			log.Info(fmt.Sprintf("Deleting draining jobs for node: %s", node.Name))
-			err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-post")
+			err = util.DeleteJobWithName(c, kclient, instance, node.Name+"-drain-job-post")
 			if err != nil && !errors.IsNotFound(err) {
 				return err
 			}
-			err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-pre")
+			err = util.DeleteJobWithName(c, kclient, instance, node.Name+"-drain-job-pre")
 			if err != nil && !errors.IsNotFound(err) {
 				return err
 			}
@@ -675,7 +780,7 @@ func ensureNodePreDrain(c client.Client, nodeName string, instance *computenodev
 		return false, err
 	}
 
-	nodePreDrained, err := isNodeDrained(c, nodeName, nodeName+"-drain-job-pre", instance)
+	nodePreDrained, err := util.IsJobDone(c, nodeName+"-drain-job-pre", instance)
 	if err != nil && errors.IsNotFound(err) {
 		return false, fmt.Errorf("Pre NodeDrain job IsNotFound: %s", nodeName+"-drain-job-pre")
 	} else if err != nil {
@@ -690,7 +795,7 @@ func ensureNodePostDrain(c client.Client, nodeName string, instance *computenode
 		return false, err
 	}
 
-	nodePostDrained, err := isNodeDrained(c, nodeName, nodeName+"-drain-job-post", instance)
+	nodePostDrained, err := util.IsJobDone(c, nodeName+"-drain-job-post", instance)
 	if err != nil && errors.IsNotFound(err) {
 		return false, fmt.Errorf("Post NodeDrain job IsNotFound: %s", nodeName+"-drain-job-post")
 	} else if err != nil {
@@ -762,90 +867,87 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 	}
 
 	jobName := ""
-	containerCommand := ""
+	containerCommand := []string{}
 	if runPreTasks {
 		jobName = nodeName + "-drain-job-pre"
-		containerCommand = "/usr/local/bin/scaledownpre.sh"
+		containerCommand = append(containerCommand, "/usr/local/bin/scaledownpre.sh")
 	} else {
 		jobName = nodeName + "-drain-job-post"
-		containerCommand = "/usr/local/bin/scaledownpost.sh"
+		containerCommand = append(containerCommand, "/usr/local/bin/scaledownpost.sh")
 	}
 
-	var completions int32 = 1
-	var parallelism int32 = 1
-	var backoffLimit int32 = 20
-	oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
-
 	// Create job that runs the scale task
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            jobName,
-			Namespace:       instance.Namespace,
-			OwnerReferences: []metav1.OwnerReference{*oref},
-		},
-		Spec: batchv1.JobSpec{
-			Completions:  &completions,
-			Parallelism:  &parallelism,
-			BackoffLimit: &backoffLimit,
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:            jobName,
-					Namespace:       instance.Namespace,
-					OwnerReferences: []metav1.OwnerReference{*oref},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  jobName,
-						Image: instance.Spec.Drain.DrainPodImage,
-						// TODO: mschuppert - Right now this is not a kolla container.
-						// When this is moved to a kolla based container, we should use
-						// the kolla_start procedure
-						Command:      []string{containerCommand},
-						Env:          envVars,
-						VolumeMounts: volumeMounts,
-					}},
-					Volumes:       volumes,
-					RestartPolicy: "OnFailure",
+	err := util.CreateJob(c, instance, jobName, volumeMounts, volumes, containerCommand, envVars)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	} else if errors.IsAlreadyExists(err) {
+		log.Info(fmt.Sprintf("Job already present: %v", jobName))
+	} else {
+		log.Info(fmt.Sprintf("Job created: %v", jobName))
+	}
+
+	return nil
+}
+
+func disableNovaComputeService(c client.Client, deletedTaggedMachineNames []computenodev1alpha1.DisabledNode, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
+	var scriptsVolumeDefaultMode int32 = 0755
+	envVars := []corev1.EnvVar{}
+
+	// Env vars to connect to openstack endpoints
+	// mschuppert - note: 	the format of the secret/configmap might change when the OSP controller
+	//			operators who in the end should populate this information are done. So
+	//			likely changes are expected.
+	// From ConfigMap
+	for env, v := range openstackClient.Data {
+		envVars = append(envVars, corev1.EnvVar{Name: env, Value: v})
+	}
+	// From Secret
+	for env, v := range openstackClientAdmin.Data {
+		envVars = append(envVars, corev1.EnvVar{Name: env, Value: string(v)})
+	}
+
+	volumes := []corev1.Volume{
+		{
+			Name: strings.ToLower(instance.Kind) + "-scripts",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					DefaultMode: &scriptsVolumeDefaultMode,
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: strings.ToLower(instance.Kind) + "-scripts",
+					},
 				},
 			},
 		},
 	}
 
-	if err := c.Create(context.TODO(), job); err != nil && !errors.IsAlreadyExists(err) {
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      strings.ToLower(instance.Kind) + "-scripts",
+			ReadOnly:  true,
+			MountPath: "/usr/local/bin",
+		},
+	}
+
+	nodes := []string{}
+	for _, node := range deletedTaggedMachineNames {
+		nodes = append(nodes, node.Name)
+	}
+	envVars = append(envVars, corev1.EnvVar{Name: "DISABLE_COMPUTE_SERVICES", Value: strings.Join(nodes, " ")})
+
+	// Create job that runs the disable task
+	jobName := "disable-nova-compute-service-" + instance.Spec.RoleName
+	containerCommand := []string{"/usr/local/bin/disablecomputeservice.sh"}
+
+	err := util.CreateJob(c, instance, jobName, volumeMounts, volumes, containerCommand, envVars)
+	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	} else if errors.IsAlreadyExists(err) {
-		log.Info(fmt.Sprintf("Drain job already present: %v", jobName))
+		log.Info(fmt.Sprintf("Job already present: %v", jobName))
 	} else {
-		log.Info(fmt.Sprintf("Drain job created: %v", jobName))
+		log.Info(fmt.Sprintf("Job created: %v", jobName))
 	}
+
 	return nil
-}
-
-func isNodeDrained(c client.Client, nodeName string, jobName string, instance *computenodev1alpha1.ComputeNodeOpenStack) (bool, error) {
-	job := &batchv1.Job{}
-	err := c.Get(context.TODO(), types.NamespacedName{Name: jobName, Namespace: instance.Namespace}, job)
-	if err != nil {
-		return false, err
-	}
-
-	if job.Status.Succeeded == 1 {
-		log.Info(fmt.Sprintf("NodeDrain job suceeded: %s", job.Name))
-		return true, nil
-	} else if job.Status.Active >= 1 {
-		log.Info(fmt.Sprintf("NodeDrain job still running: %s", job.Name))
-		return false, nil
-	}
-
-	// if job is not succeeded or active, return type and reason as error from first conditions
-	// to log and reconcile
-	conditionsType := ""
-	conditionsReason := ""
-	if len(job.Status.Conditions) > 0 {
-		conditionsType = string(job.Status.Conditions[0].Type)
-		conditionsReason = job.Status.Conditions[0].Reason
-	}
-
-	return false, fmt.Errorf("nodeDrain job type %v, reason: %v", conditionsType, conditionsReason)
 }
 
 func updateMachineDeletionSelection(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
@@ -949,25 +1051,6 @@ func addToBeRemovedTaint(kclient kubernetes.Interface, node corev1.Node) error {
 	return nil
 }
 
-func deleteJobWithName(c client.Client, kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, jobName string) error {
-	job := &batchv1.Job{}
-	err := c.Get(context.TODO(), types.NamespacedName{Name: jobName, Namespace: instance.Namespace}, job)
-	if err != nil {
-		return err
-	}
-
-	if job.Status.Succeeded == 1 {
-		background := metav1.DeletePropagationBackground
-		err = kclient.BatchV1().Jobs(instance.Namespace).Delete(jobName, &metav1.DeleteOptions{PropagationPolicy: &background})
-		if err != nil {
-			return fmt.Errorf("failed to delete drain job: %s, %v", job.Name, err)
-		}
-		log.Info("Deleted NodeDrain job: " + job.Name)
-	}
-
-	return nil
-}
-
 func ensureComputeNodeOpenStackScriptsConfigMap(r *ReconcileComputeNodeOpenStack, instance *computenodev1alpha1.ComputeNodeOpenStack, name string) error {
 	scriptsConfigMap := computenodeopenstack.ScriptsConfigMap(instance, name)
 
@@ -1031,4 +1114,29 @@ func getOpenStackClientInformation(r *ReconcileComputeNodeOpenStack, instance *c
 		return nil, nil, fmt.Errorf("Failed to find the configmap %s holding information required to connect to the OSP API endpoints: %v", openStackClientConfigMap, err)
 	}
 	return openstackClientAdmin, openstackClient, nil
+}
+
+func getDeletedOspWorkerNodes(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) ([]computenodev1alpha1.DisabledNode, error) {
+	deletedOspWorkerNodes := []computenodev1alpha1.DisabledNode{}
+	machineList := &machinev1beta1.MachineList{}
+	listOpts := []client.ListOption{
+		client.InNamespace("openshift-machine-api"),
+		client.MatchingLabels{"machine.openshift.io/cluster-api-machine-role": instance.Spec.RoleName},
+	}
+	err := c.List(context.TODO(), machineList, listOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, machine := range machineList.Items {
+		if machine.Status.NodeRef == nil {
+			continue
+		}
+		deletionTimestamp := machine.DeletionTimestamp
+		if deletionTimestamp != nil {
+			nodeName := computenodev1alpha1.DisabledNode{Name: machine.Status.NodeRef.Name}
+			deletedOspWorkerNodes = append(deletedOspWorkerNodes, nodeName)
+		}
+	}
+	return deletedOspWorkerNodes, nil
 }

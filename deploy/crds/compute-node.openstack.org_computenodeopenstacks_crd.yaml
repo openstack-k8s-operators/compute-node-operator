@@ -165,6 +165,18 @@ spec:
         status:
           description: ComputeNodeOpenStackStatus defines the observed state of ComputeNodeOpenStack
           properties:
+            disabledNode:
+              description: DisabledNodes imformation
+              items:
+                description: DisabledNode list the already disabled nodes in OSP
+                properties:
+                  name:
+                    description: Node Name
+                    type: string
+                required:
+                - name
+                type: object
+              type: array
             infraDaemonSets:
               description: Infra DaemonSets created
               items:

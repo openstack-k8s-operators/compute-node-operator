@@ -23,7 +23,7 @@ if [ -z "${SCALE_DOWN_NODE_NAME}" ] ; then
   exit 1
 fi
 
-# Disable compute service
+# Make sure compute service is disable
 COMPUTE_SERVICE_STATUS=$(openstack compute service list --long \
                           --service nova-compute \
                           --host ${SCALE_DOWN_NODE_NAME} \
