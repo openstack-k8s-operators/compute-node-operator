@@ -193,11 +193,27 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		return reconcile.Result{}, err
 	}
 
-	// Generate the objects
+	// Generate the Worker objects
 	objs := []*uns.Unstructured{}
 	manifests, err := bindatautil.RenderDir(filepath.Join(ManifestPath, "worker-osp"), &data)
 	if err != nil {
-		log.Error(err, "Failed to render manifests : %v")
+		log.Error(err, "Failed to render worker manifests : %v")
+		return reconcile.Result{}, err
+	}
+	objs = append(objs, manifests...)
+
+	// Generate the Compute objects
+	manifests, err = bindatautil.RenderDir(filepath.Join(ManifestPath, "nova"), &data)
+	if err != nil {
+		log.Error(err, "Failed to render nova manifests : %v")
+		return reconcile.Result{}, err
+	}
+	objs = append(objs, manifests...)
+
+	// Generate the Neutron objects
+	manifests, err = bindatautil.RenderDir(filepath.Join(ManifestPath, "neutron"), &data)
+	if err != nil {
+		log.Error(err, "Failed to render neutron manifests : %v")
 		return reconcile.Result{}, err
 	}
 	objs = append(objs, manifests...)
@@ -246,11 +262,28 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	data.Data["K8sServiceIP"] = instance.Spec.K8sServiceIP
 	data.Data["APIIntIP"] = instance.Spec.APIIntIP
 	data.Data["Workers"] = instance.Spec.Workers
-	if instance.Spec.CorePinning == "" {
-		data.Data["Pinning"] = false
-	} else {
-		data.Data["Pinning"] = true
-		data.Data["CorePinning"] = instance.Spec.CorePinning
+
+	data.Data["Isolcpus"] = false
+	data.Data["SshdPort"] = 2022
+	data.Data["NovaComputeCPUDedicatedSet"] = ""
+	data.Data["NovaComputeCPUSharedSet"] = ""
+	data.Data["CommonConfigMap"] = "common-config"
+	data.Data["OspSecrets"] = "osp-secrets"
+	if instance.Spec.Compute.NovaComputeCPUDedicatedSet != "" {
+		data.Data["Isolcpus"] = true
+		data.Data["NovaComputeCPUDedicatedSet"] = instance.Spec.Compute.NovaComputeCPUDedicatedSet
+	}
+	if instance.Spec.Compute.NovaComputeCPUSharedSet != "" {
+		data.Data["NovaComputeCPUSharedSet"] = instance.Spec.Compute.NovaComputeCPUSharedSet
+	}
+	if instance.Spec.Compute.SshdPort != 0 {
+		data.Data["SshdPort"] = instance.Spec.Compute.SshdPort
+	}
+	if instance.Spec.Compute.CommonConfigMap != "" {
+		data.Data["CommonConfigMap"] = instance.Spec.Compute.CommonConfigMap
+	}
+	if instance.Spec.Compute.OspSecrets != "" {
+		data.Data["OspSecrets"] = instance.Spec.Compute.OspSecrets
 	}
 
 	// get it from openshift-machine-api secrets (assumes worker-user-data)

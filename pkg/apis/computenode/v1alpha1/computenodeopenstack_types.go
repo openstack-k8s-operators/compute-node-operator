@@ -32,6 +32,10 @@ type ComputeNodeOpenStackSpec struct {
 	OpenStackClientAdminSecret string `json:"openStackClientAdminSecret"`
 	// Node draining configuration options
 	Drain DrainParam `json:"drain"`
+	// Compute/Nova configuration
+	Compute NovaCompute `json:"compute,omitempty"`
+	// Network/Neutron configuration
+	Network NeutronNetwork `json:"network,omitempty"`
 }
 
 // InfraDaemonSet defines the daemon set required
@@ -49,6 +53,33 @@ type DrainParam struct {
 	// Image used for drain pod which performs compute removal, this is usually
 	// an image which has the openstackclient and osc-placement packages installed.
 	DrainPodImage string `json:"drainPodImage"`
+}
+
+// NovaCompute defines nova configuration parameters
+type NovaCompute struct {
+	// CPU Dedicated Set (pinning)
+	NovaComputeCPUDedicatedSet string `json:"novaComputeCPUDedicatedSet,omitempty"`
+	// CPU Shared Set
+	NovaComputeCPUSharedSet string `json:"novaComputeCPUSharedSet,omitempty"`
+	// sshd migration port
+	SshdPort int32 `json:"sshdPort,omitempty"`
+	// Nova configMap containing the common config
+	CommonConfigMap string `json:"commonConfigMap,omitempty"`
+	// Nova secret containing the needed passwords
+	OspSecrets string `json:"ospSecrets,omitempty"`
+}
+
+// NeutronNetwork defines neutron configuration parameters
+type NeutronNetwork struct {
+	BridgeMappings   string      `json:"bridgeMappings,omitempty"`
+	MechanishDrivers string      `json:"mechanismDrivers,omitempty"`
+	ServicePlugings  string      `json:"servicePlugins,omitempty"`
+	Sriov            SriovConfig `json:"sriov,omitempty"`
+}
+
+// SriovConfig defines SRIOV config parameters, such as nic information.
+type SriovConfig struct {
+	DevName string `json:"devName"`
 }
 
 // NodeToDelete defines the name of the node to delete and if automatic drain is needed
