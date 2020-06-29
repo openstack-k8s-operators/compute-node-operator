@@ -1,0 +1,14 @@
+apiVersion: nova.openstack.org/v1
+kind: NovaCompute
+metadata:
+  name: nova-compute-{{ .WorkerOspRole }}
+  namespace: openstack
+spec:
+  commonConfigMap: {{ .CommonConfigMap }}
+  ospSecrets: {{ .OspSecrets }}
+  novaComputeCpuDedicatedSet: {{ .NovaComputeCPUDedicatedSet }}
+  novaComputeCpuSharedSet: {{ .NovaComputeCPUSharedSet }}
+  novaComputeImage: docker.io/tripleotrain/rhel-binary-nova-compute:current-tripleo
+  roleName: {{ .WorkerOspRole }}
+  serviceAccount: nova-operator
+  

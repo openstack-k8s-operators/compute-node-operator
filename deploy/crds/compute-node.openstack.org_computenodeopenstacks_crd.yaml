@@ -41,6 +41,26 @@ spec:
             clusterName:
               description: Cluster name
               type: string
+            compute:
+              description: Compute/Nova configuration
+              properties:
+                commonConfigMap:
+                  description: Nova configMap containing the common config
+                  type: string
+                novaComputeCPUDedicatedSet:
+                  description: CPU Dedicated Set (pinning)
+                  type: string
+                novaComputeCPUSharedSet:
+                  description: CPU Shared Set
+                  type: string
+                ospSecrets:
+                  description: Nova secret containing the needed passwords
+                  type: string
+                sshdPort:
+                  description: sshd migration port
+                  format: int32
+                  type: integer
+              type: object
             corePinning:
               description: Cores Pinning
               type: string
@@ -79,6 +99,25 @@ spec:
             k8sServiceIP:
               description: Kubernetes service cluster IP
               type: string
+            network:
+              description: Network/Neutron configuration
+              properties:
+                bridgeMappings:
+                  type: string
+                mechanismDrivers:
+                  type: string
+                servicePlugins:
+                  type: string
+                sriov:
+                  description: SriovConfig defines SRIOV config parameters, such as
+                    nic information.
+                  properties:
+                    devName:
+                      type: string
+                  required:
+                  - devName
+                  type: object
+              type: object
             nodesToDelete:
               description: Nodes to delete upon scale down
               items:

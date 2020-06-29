@@ -89,6 +89,21 @@ rules:
   - patch
   - update
   - watch
+  - apiGroups:
+    - nova.openstack.org
+    resources:
+    - novacomputes
+    - virtlogds
+    - libvirtds
+    - iscsids
+    - novamigrationtargets
+    verbs:
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
 - apiGroups:
   - machine.openshift.io
   resources:
