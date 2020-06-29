@@ -379,7 +379,6 @@ func newDaemonSet(instance *computenodev1alpha1.ComputeNodeOpenStack, ds *appsv1
 }
 
 func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
-
 	nodeList := &corev1.NodeList{}
 	workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
 	listOpts := []client.ListOption{
@@ -394,49 +393,42 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 	nodesStatus := []computenodev1alpha1.Node{}
 	for _, node := range nodeList.Items {
 		log.Info(fmt.Sprintf("Update node status for node: %s", node.Name))
-		nodeStatus := getNodeStatus(&node)
+		nodeStatus := getNodeStatus(c, &node)
 		previousNodeStatus := getPreviousNodeStatus(node.Name, instance)
 
-		switch previousNodeStatus {
-		case "None":
-			log.Info(fmt.Sprintf("Previous status None: %s", node.Name))
-			if nodeStatus == "SchedulingDisabled" {
-				// Node being removed
-				break
-			}
-			// add node to status and create blocker pod
-			newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
-			nodesStatus = append(nodesStatus, newNode)
-			err = createBlockerPod(c, node.Name, instance)
-			if err != nil {
-				return err
-			}
-			// if nodestatus is ready, update readyWorkers
-			if nodeStatus == "Ready" {
-				readyWorkers++
-				log.Info(fmt.Sprintf("Compute worker node added: %s", node.Name))
-			}
+		switch nodeStatus {
 		case "NotReady":
-			log.Info(fmt.Sprintf("Previous status NotReady: %s", node.Name))
-			if nodeStatus == "Ready" {
-				readyWorkers++
-			} else if nodeStatus == "SchedulingDisabled" {
-				err = deleteBlockerPodFinalizer(c, node.Name, instance)
+			log.Info(fmt.Sprintf("Node status is NotReady: %s", node.Name))
+			if previousNodeStatus == "None" {
+				// Create blocker pod
+				err = createBlockerPod(c, node.Name, instance)
+				if err != nil {
+					return err
+				}
 			}
 			// add node to status
 			newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 			nodesStatus = append(nodesStatus, newNode)
 		case "Ready":
-			log.Info(fmt.Sprintf("Previous status Ready: %s", node.Name))
+			log.Info(fmt.Sprintf("Node status is Ready: %s", node.Name))
+			if previousNodeStatus == "None" {
+				// Create blocker pod
+				err = createBlockerPod(c, node.Name, instance)
+				if err != nil {
+					return err
+				}
+			}
+			// add node to status
 			newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
 			nodesStatus = append(nodesStatus, newNode)
-
-			if nodeStatus == "Ready" {
-				readyWorkers++
-			}
+			readyWorkers++
 		case "SchedulingDisabled":
-			log.Info(fmt.Sprintf("Previous status SchedulingDisabled: %s", node.Name))
-			// trigger node drain pre tasks (new pod)
+			log.Info(fmt.Sprintf("Node status is SchedulingDisabled: %s", node.Name))
+			// If previous status is None, blocker pod was not created, nothing to do
+			if previousNodeStatus == "None" {
+				break
+			}
+			// If blocker pod finalizer was already deleted, there is nothing extra to do either
 			finalizerDeleted, err := isBlockerPodFinalizerDeleted(c, node.Name, instance)
 			if err != nil {
 				return err
@@ -444,89 +436,75 @@ func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *
 				break
 			}
 
-			err = triggerNodePreDrain(c, node.Name, instance, openstackClientAdmin, openstackClient)
+			/* Steps to delete the drain the node
+			1. Predraining: disable nova service, (optional) migrate VMs, wait until there is no VMs
+			2. Postdraining: taint the node, remove nova-compute from nova services and placement
+			3. Remove cleanup jobs, blocker pod finalizer, and update nodesToDelete status information
+			*/
+			// 1. NodePreDrain
+			nodePreDrained, err := ensureNodePreDrain(c, node.Name, instance, openstackClientAdmin, openstackClient)
+			if err != nil {
+				return err
+			}
+			log.Info(fmt.Sprintf("Pre draining job completed: %t", nodePreDrained))
+			if !nodePreDrained {
+				// add node to status
+				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+				nodesStatus = append(nodesStatus, newNode)
+				break
+			}
+
+			// 2. NodePostDrain
+			// a) taint the node to have OSP pods stopped
+			err = addToBeRemovedTaint(kclient, node)
+			if err != nil {
+				return err
+			}
+			// b) run post drain job
+			nodePostDrained, err := ensureNodePostDrain(c, node.Name, instance, openstackClientAdmin, openstackClient)
+			if err != nil {
+				return err
+			}
+			log.Info(fmt.Sprintf("Post draining job completed: %t", nodePostDrained))
+			if !nodePostDrained {
+				// add node to status
+				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
+				nodesStatus = append(nodesStatus, newNode)
+				break
+			}
+
+			// 3. Cleanup
+			log.Info(fmt.Sprintf("Deleting draining jobs for node: %s", node.Name))
+			err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-post")
+			if err != nil && !errors.IsNotFound(err) {
+				return err
+			}
+			err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-pre")
+			if err != nil && !errors.IsNotFound(err) {
+				return err
+			}
+
+			log.Info(fmt.Sprintf("Deleting blocker pod finalizer for node: %s", node.Name))
+			// delete blocker pod to proceed with node removal from OCP
+			err = deleteBlockerPodFinalizer(c, node.Name, instance)
 			if err != nil {
 				return err
 			}
 
-			// if pre draining has finished (job completed) remove blocker-pod finalizer
-			drainedPre, err := isNodeDrained(c, node.Name, node.Name+"-drain-job-pre", instance)
-			if err != nil && errors.IsNotFound(err) {
-				return fmt.Errorf("Pre NodeDrain job IsNotFound: %s", node.Name+"-drain-job-pre")
-			} else if err != nil {
-				return err
-			}
-
-			log.Info(fmt.Sprintf("Pre draining job: %s", drainedPre))
-			switch drainedPre {
-			case "succeeded":
-				// taint node that daemonset pods get stopped
-				// since we loop over the nodes in status update we need to
-				// 1) taint the node to have OSP pods stopped
-				// 2) run post drain job
-				// 3) remove blocker pod to get node finally removed
-				err = addToBeRemovedTaint(kclient, node)
-				if err != nil {
-					return err
-				}
-
-				// trigger node drain post tasks (new pod)
-				err = triggerNodePostDrain(c, node.Name, instance, openstackClientAdmin, openstackClient)
-				if err != nil {
-					return err
-				}
-
-				// if post draining has finished (job completed) remove the pod
-				drainedPost, err := isNodeDrained(c, node.Name, node.Name+"-drain-job-post", instance)
-				if err != nil && errors.IsNotFound(err) {
-					return fmt.Errorf("Post NodeDrain job IsNotFound: %s", node.Name+"-drain-job-post")
-				} else if err != nil {
-					return err
-				}
-				log.Info(fmt.Sprintf("NodeDrainPost status: %v ", drainedPost))
-				switch drainedPost {
-				case "succeeded":
-					log.Info(fmt.Sprintf("NodeDrainPost job succeeded: %s", node.Name+"-drain-job-post"))
-					err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-post")
-					if err != nil && !errors.IsNotFound(err) {
-						return err
+			log.Info(fmt.Sprintf("Updating nodeToDelete status"))
+			for i, nodeToDelete := range instance.Spec.NodesToDelete {
+				if nodeToDelete.Name == node.Name {
+					if len(instance.Spec.NodesToDelete) == 1 {
+						instance.Spec.NodesToDelete = []computenodev1alpha1.NodeToDelete{}
+					} else {
+						instance.Spec.NodesToDelete = removeNode(instance.Spec.NodesToDelete, i)
 					}
-					err = deleteJobWithName(c, kclient, instance, node.Name+"-drain-job-pre")
-					if err != nil && !errors.IsNotFound(err) {
-						return err
-					}
-
-					// delete blocker pod to proceed with node removal from OCP
-					err = deleteBlockerPodFinalizer(c, node.Name, instance)
+					err = c.Update(context.TODO(), instance)
 					if err != nil {
 						return err
 					}
-
-					for i, nodeToDelete := range instance.Spec.NodesToDelete {
-						if nodeToDelete.Name == node.Name {
-							if len(instance.Spec.NodesToDelete) == 1 {
-								instance.Spec.NodesToDelete = []computenodev1alpha1.NodeToDelete{}
-							} else {
-								instance.Spec.NodesToDelete = removeNode(instance.Spec.NodesToDelete, i)
-							}
-							err = c.Update(context.TODO(), instance)
-							if err != nil {
-								return err
-							}
-							break
-						}
-					}
-				default:
-					newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
-					nodesStatus = append(nodesStatus, newNode)
+					break
 				}
-			case "active":
-				log.Info(fmt.Sprintf("NodeDrainPre job active: %s", node.Name+"-drain-job-pre"))
-				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
-				nodesStatus = append(nodesStatus, newNode)
-			default:
-				newNode := computenodev1alpha1.Node{Name: node.Name, Status: nodeStatus}
-				nodesStatus = append(nodesStatus, newNode)
 			}
 		}
 	}
@@ -547,10 +525,26 @@ func removeNode(nodes []computenodev1alpha1.NodeToDelete, i int) []computenodev1
 	return nodes[:len(nodes)-1]
 }
 
-func getNodeStatus(node *corev1.Node) string {
+func getNodeStatus(c client.Client, node *corev1.Node) string {
 	if node.Spec.Unschedulable {
 		return "SchedulingDisabled"
 	}
+
+	machineAnnotation := node.ObjectMeta.Annotations["machine.openshift.io/machine"]
+
+	machine := &machinev1beta1.Machine{}
+	err := c.Get(context.TODO(), types.NamespacedName{Name: strings.Split(machineAnnotation, "/")[1], Namespace: "openshift-machine-api"}, machine)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info(fmt.Sprintf("Machine not found, assuming node deletion"))
+		return "SchedulingDisabled"
+	} else if err == nil {
+		deletionTimestamp := machine.ObjectMeta.GetDeletionTimestamp()
+		if deletionTimestamp != nil {
+			log.Info(fmt.Sprintf("Machine with deletion timestamp, assuming node deletion"))
+			return "SchedulingDisabled"
+		}
+	}
+
 	for _, condition := range node.Status.Conditions {
 		if condition.Type == "Ready" {
 			if condition.Status == "True" {
@@ -642,20 +636,34 @@ func deleteBlockerPodFinalizer(c client.Client, nodeName string, instance *compu
 	return nil
 }
 
-func triggerNodePreDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
+func ensureNodePreDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) (bool, error) {
 	err := _triggerNodeDrain(c, nodeName, instance, true, openstackClientAdmin, openstackClient)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return nil
+
+	nodePreDrained, err := isNodeDrained(c, nodeName, nodeName+"-drain-job-pre", instance)
+	if err != nil && errors.IsNotFound(err) {
+		return false, fmt.Errorf("Pre NodeDrain job IsNotFound: %s", nodeName+"-drain-job-pre")
+	} else if err != nil {
+		return false, err
+	}
+	return nodePreDrained, nil
 }
 
-func triggerNodePostDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
+func ensureNodePostDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) (bool, error) {
 	err := _triggerNodeDrain(c, nodeName, instance, false, openstackClientAdmin, openstackClient)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return nil
+
+	nodePostDrained, err := isNodeDrained(c, nodeName, nodeName+"-drain-job-post", instance)
+	if err != nil && errors.IsNotFound(err) {
+		return false, fmt.Errorf("Post NodeDrain job IsNotFound: %s", nodeName+"-drain-job-post")
+	} else if err != nil {
+		return false, err
+	}
+	return nodePostDrained, nil
 }
 
 func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack, runPreTasks bool, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
@@ -780,19 +788,19 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 	return nil
 }
 
-func isNodeDrained(c client.Client, nodeName string, jobName string, instance *computenodev1alpha1.ComputeNodeOpenStack) (string, error) {
+func isNodeDrained(c client.Client, nodeName string, jobName string, instance *computenodev1alpha1.ComputeNodeOpenStack) (bool, error) {
 	job := &batchv1.Job{}
 	err := c.Get(context.TODO(), types.NamespacedName{Name: jobName, Namespace: instance.Namespace}, job)
 	if err != nil {
-		return "", err
+		return false, err
 	}
 
 	if job.Status.Succeeded == 1 {
 		log.Info(fmt.Sprintf("NodeDrain job suceeded: %s", job.Name))
-		return "succeeded", nil
+		return true, nil
 	} else if job.Status.Active >= 1 {
 		log.Info(fmt.Sprintf("NodeDrain job still running: %s", job.Name))
-		return "active", nil
+		return false, nil
 	}
 
 	// if job is not succeeded or active, return type and reason as error from first conditions
@@ -804,7 +812,7 @@ func isNodeDrained(c client.Client, nodeName string, jobName string, instance *c
 		conditionsReason = job.Status.Conditions[0].Reason
 	}
 
-	return "", fmt.Errorf("nodeDrain job type %v, reason: %v", conditionsType, conditionsReason)
+	return false, fmt.Errorf("nodeDrain job type %v, reason: %v", conditionsType, conditionsReason)
 }
 
 func updateMachineDeletionSelection(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
