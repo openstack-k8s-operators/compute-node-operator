@@ -12,7 +12,6 @@ COPY build/_output/csv-generator /usr/local/bin/csv-generator
 
 COPY build/bin /usr/local/bin
 COPY bindata /bindata
-RUN mkdir -p /bindata/neutron
 RUN  /usr/local/bin/user_setup
 
 # install our templates

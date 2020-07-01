@@ -286,6 +286,11 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 		data.Data["OspSecrets"] = instance.Spec.Compute.OspSecrets
 	}
 
+	data.Data["Nic"] = "enp6s0"
+	if instance.Spec.Network.Nic != "" {
+		data.Data["Nic"] = instance.Spec.Network.Nic
+	}
+
 	// get it from openshift-machine-api secrets (assumes worker-user-data)
 	userData := &corev1.Secret{}
 	err := client.Get(context.TODO(), types.NamespacedName{Name: "worker-user-data", Namespace: "openshift-machine-api"}, userData)
