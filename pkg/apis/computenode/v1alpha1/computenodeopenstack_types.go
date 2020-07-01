@@ -24,8 +24,6 @@ type ComputeNodeOpenStackSpec struct {
 	InfraDaemonSets []InfraDaemonSet `json:"infraDaemonSets,omitempty"`
 	// Nodes to delete upon scale down
 	NodesToDelete []NodeToDelete `json:"nodesToDelete,omitempty"`
-	// Namespace OpenStack resources are created, default openstack
-	OpenStackNamespace string `json:"openStackNamespace,omitempty"`
 	// openstackclient configmap which holds information to connect to OpenStack API
 	OpenStackClientConfigMap string `json:"openStackClientConfigMap"`
 	// user secrets used to connect to OpenStack API via openstackclient

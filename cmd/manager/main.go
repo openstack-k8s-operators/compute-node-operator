@@ -107,6 +107,7 @@ func main() {
 	if strings.Contains(namespace, ",") {
 		options.Namespace = ""
 		options.NewCache = cache.MultiNamespacedCacheBuilder(strings.Split(namespace, ","))
+		log.Info(fmt.Sprintf("Namespaces added to the cache: %s", namespace))
 	}
 
 	// Create a new manager to provide shared dependencies and start components

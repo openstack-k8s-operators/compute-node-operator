@@ -145,9 +145,6 @@ spec:
               description: openstackclient configmap which holds information to connect
                 to OpenStack API
               type: string
-            openStackNamespace:
-              description: Namespace OpenStack resources are created, default openstack
-              type: string
             roleName:
               description: Name of the worker role created for OSP computes
               type: string

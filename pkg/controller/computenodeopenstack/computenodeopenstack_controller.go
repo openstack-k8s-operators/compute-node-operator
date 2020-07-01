@@ -151,16 +151,11 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 		return reconcile.Result{}, err
 	}
 
-	// openStackClientAdminSecret and openStackClientConfigMap are expected to exist in
-	// openStackNamespace namespace. Default "openstack"
+	// openStackClientAdminSecret and openStackClientConfigMap are expected to exist
 	// mschuppert - note: 	the format of the secret/configmap might change when the OSP controller
 	//			operators who in the end should populate this information are done. So
 	//			likely changes are expected.
-	openStackNamespace := "openstack"
-	if instance.Spec.OpenStackNamespace != "" {
-		openStackNamespace = instance.Spec.OpenStackNamespace
-	}
-	openStackClientAdmin, openStackClient, err := getOpenStackClientInformation(r.kclient, instance, openStackNamespace)
+	openStackClientAdmin, openStackClient, err := getOpenStackClientInformation(r, instance)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -249,6 +244,7 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	instance.Status.SpecMDS = specMDS
 	err = r.client.Status().Update(context.TODO(), instance)
 	if err != nil {
+		log.Error(err, "Failed to update CR status %v")
 		return reconcile.Result{}, err
 	}
 
@@ -417,12 +413,11 @@ func newDaemonSet(instance *computenodev1alpha1.ComputeNodeOpenStack, ds *appsv1
 }
 
 func updateNodesStatus(c client.Client, kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, openstackClientAdmin *corev1.Secret, openstackClient *corev1.ConfigMap) error {
-	nodeList := &corev1.NodeList{}
+
+	// With the operator watching multiple namespaces provided as a list the c client
+	// returns each entry multiple times. The kclient returns only a single entry.
 	workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
-	listOpts := []client.ListOption{
-		client.MatchingLabels{workerLabel: ""},
-	}
-	err := c.List(context.TODO(), nodeList, listOpts...)
+	nodeList, err := kclient.CoreV1().Nodes().List(metav1.ListOptions{LabelSelector: workerLabel})
 	if err != nil {
 		return err
 	}
@@ -1016,24 +1011,24 @@ func ensureComputeNodeOpenStackScriptsConfigMap(r *ReconcileComputeNodeOpenStack
 	return nil
 }
 
-func getOpenStackClientInformation(kclient kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack, namespace string) (*corev1.Secret, *corev1.ConfigMap, error) {
+func getOpenStackClientInformation(r *ReconcileComputeNodeOpenStack, instance *computenodev1alpha1.ComputeNodeOpenStack) (*corev1.Secret, *corev1.ConfigMap, error) {
 	openStackClientAdminSecret := instance.Spec.OpenStackClientAdminSecret
 	openStackClientConfigMap := instance.Spec.OpenStackClientConfigMap
 
 	// check for Secret with information required for scale down tasks to connect to the OpenStack API
 	openstackClientAdmin := &corev1.Secret{}
 	// Check if secret holding the admin information for connection to the api endpoints exist
-	openstackClientAdmin, err := kclient.CoreV1().Secrets(namespace).Get(openStackClientAdminSecret, metav1.GetOptions{})
+	err := r.client.Get(context.TODO(), types.NamespacedName{Name: openStackClientAdminSecret, Namespace: instance.Namespace}, openstackClientAdmin)
 	if err != nil && errors.IsNotFound(err) {
-		return nil, nil, fmt.Errorf("Failed to find the secret holding admin user information required to connect to the OSP API endpoints: %v", err)
+		return nil, nil, fmt.Errorf("Failed to find the secret %s holding admin user information required to connect to the OSP API endpoints: %v", openStackClientAdminSecret, err)
 	}
 
 	// check for ConfigMap with information required for scale down tasks to connect to the OpenStack API
 	openstackClient := &corev1.ConfigMap{}
 	// Check if configmap holding the information for connection to the api endpoints exist
-	openstackClient, err = kclient.CoreV1().ConfigMaps(namespace).Get(openStackClientConfigMap, metav1.GetOptions{})
+	err = r.client.Get(context.TODO(), types.NamespacedName{Name: openStackClientConfigMap, Namespace: instance.Namespace}, openstackClient)
 	if err != nil && errors.IsNotFound(err) {
-		return nil, nil, fmt.Errorf("Failed to find the configmap holding information required to connect to the OSP API endpoints: %v", err)
+		return nil, nil, fmt.Errorf("Failed to find the configmap %s holding information required to connect to the OSP API endpoints: %v", openStackClientConfigMap, err)
 	}
 	return openstackClientAdmin, openstackClient, nil
 }

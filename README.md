@@ -94,7 +94,7 @@ Create custom resource for a compute node which specifies the needed information
     kind: ComputeNodeOpenStack
     metadata:
       name: example-computenodeopenstack
-      namespace: openshift-machine-api
+      namespace: openstack
     spec:
       # Add fields here
       roleName: worker-osp
@@ -122,13 +122,13 @@ Apply the CR:
 
     oc apply -f deploy/crds/compute-node.openstack.org_v1alpha1_computenodeopenstack_cr.yaml
     
-    oc get pods -n openshift-machine-api
+    oc get pods -n openstack
     NAME                                   READY   STATUS    RESTARTS   AGE
     compute-node-operator-ffd64796-vshg6   1/1     Running   0          119s
 
 Get the generated machineconfig and machinesets
 
-    oc get machineset  -n openshift-machine-api
+    oc get machineset -n openshift-machine-api
     oc get machineconfigpool
     oc get machineconfig
 
@@ -139,7 +139,7 @@ Get the generated machineconfig and machinesets
 
 Edit the computenodeopenstack CR:
 
-    oc -n openshift-machine-api edit computenodeopenstacks.compute-node.openstack.org example-computenodeopenstack
+    oc -n openstack edit computenodeopenstacks.compute-node.openstack.org example-computenodeopenstack
     # Modify the number of workers and exit
 
     oc get machineset -n openshift-machine-api
@@ -153,7 +153,7 @@ There are different ways to remove a compute worker node from the OpenStack envi
 
 Edit the computenodeopenstack CR and lower the workers number, save and exit:
 
-    oc -n openshift-machine-api edit computenodeopenstacks.compute-node.openstack.org example-computenodeopenstack
+    oc -n openstack edit computenodeopenstacks.compute-node.openstack.org example-computenodeopenstack
 
 OCP will choose a compute worker node to be removed. Per the `deletePolicy` of the compute worker machineset is set to `Newest`, therefore the newest compute node is expected to be removed. Depending on the status of the instances and `drain` configuration, manual migration/cleanup of the instances is required.
 
@@ -165,7 +165,7 @@ The following command will show which compute worker node got disabled to be rem
 
 Edit the computenodeopenstack CR, lower the workers number and add a `nodesToDelete` section in the spec with the details of the worker node which should be removed:
 
-    oc -n openshift-machine-api edit computenodeopenstacks.compute-node.openstack.org example-computenodeopenstack
+    oc -n openstack edit computenodeopenstacks.compute-node.openstack.org example-computenodeopenstack
 
 Modify the number of `workers` and add the `nodesToDelete` section to the spec:
 
