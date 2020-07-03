@@ -71,6 +71,7 @@ type NovaCompute struct {
 
 // NeutronNetwork defines neutron configuration parameters
 type NeutronNetwork struct {
+	Nic				 string `json:"nic"`
 	BridgeMappings   string      `json:"bridgeMappings,omitempty"`
 	MechanishDrivers string      `json:"mechanismDrivers,omitempty"`
 	ServicePlugings  string      `json:"servicePlugins,omitempty"`

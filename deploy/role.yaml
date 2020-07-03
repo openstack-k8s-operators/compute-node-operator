@@ -90,6 +90,18 @@ rules:
   - update
   - watch
 - apiGroups:
+  - neutron.openstack.org
+  resources:
+  - ovncontrollers
+  - ovsnodeosps
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+- apiGroups:
   - nova.openstack.org
   resources:
   - novacomputes

@@ -18,6 +18,7 @@ spec:
     commonConfigMap: common-config
     ospSecrets: osp-secrets
   network:
+    nic: "enp6s0"
     bridgeMappings: ""
     mechanismDrivers: ""
     servicePlugins: ""

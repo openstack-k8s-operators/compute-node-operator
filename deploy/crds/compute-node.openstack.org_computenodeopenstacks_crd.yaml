@@ -106,6 +106,8 @@ spec:
                   type: string
                 mechanismDrivers:
                   type: string
+                nic:
+                  type: string
                 servicePlugins:
                   type: string
                 sriov:
@@ -117,6 +119,8 @@ spec:
                   required:
                   - devName
                   type: object
+              required:
+              - nic
               type: object
             nodesToDelete:
               description: Nodes to delete upon scale down
