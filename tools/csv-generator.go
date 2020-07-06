@@ -31,6 +31,9 @@ var (
 func main() {
 	flag.Parse()
 
+	if len(*namespace) == 0 {
+		*namespace = "openstack"
+	}
 	data := NewClusterServiceVersionData{
 		CsvVersion:         *csvVersion,
 		ReplacesCsvVersion: *replacesCsvVersion,
@@ -67,7 +70,7 @@ type NewClusterServiceVersionData struct {
 func createOperatorDeployment(repo, namespace, deployClusterResources, operatorImage, tag, verbosity, pullPolicy string) *appsv1.Deployment {
 	deployment := helper.CreateOperatorDeployment("compute-node-operator", namespace, "name", "compute-node-operator", "compute-node-operator", int32(1))
 	container := helper.CreateOperatorContainer("compute-node-operator", operatorImage, verbosity, corev1.PullPolicy(pullPolicy))
-	container.Env = *helper.CreateOperatorEnvVar(repo, deployClusterResources, operatorImage, pullPolicy)
+	container.Env = *helper.CreateOperatorEnvVar(repo, deployClusterResources, operatorImage, pullPolicy, namespace)
 	deployment.Spec.Template.Spec.Containers = []corev1.Container{container}
 	return deployment
 }
@@ -87,19 +90,12 @@ Install and configure OpenStack Compute nodes.
 		data.ImagePullPolicy)
 
 	clusterRules := getOperatorClusterRules()
-	rules := getOperatorRules()
 
 	strategySpec := csvv1.StrategyDetailsDeployment{
 		ClusterPermissions: []csvv1.StrategyDeploymentPermissions{
 			{
 				ServiceAccountName: "compute-node-operator",
 				Rules:              *clusterRules,
-			},
-		},
-		Permissions: []csvv1.StrategyDeploymentPermissions{
-			{
-				ServiceAccountName: "compute-node-operator",
-				Rules:              *rules,
 			},
 		},
 		DeploymentSpecs: []csvv1.StrategyDeploymentSpec{
@@ -207,7 +203,7 @@ Install and configure OpenStack Compute nodes.
 	}, nil
 }
 
-func getOperatorRules() *[]rbacv1.PolicyRule {
+func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 	return &[]rbacv1.PolicyRule{
 		{
 			APIGroups: []string{
@@ -226,7 +222,27 @@ func getOperatorRules() *[]rbacv1.PolicyRule {
 				"secrets",
 			},
 			Verbs: []string{
-				"*",
+				"create",
+				"delete",
+				"get",
+				"list",
+				"patch",
+				"update",
+				"watch",
+			},
+		},
+		{
+			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"nodes",
+			},
+			Verbs: []string{
+				"get",
+				"list",
+				"update",
+				"watch",
 			},
 		},
 		{
@@ -240,44 +256,13 @@ func getOperatorRules() *[]rbacv1.PolicyRule {
 				"statefulsets",
 			},
 			Verbs: []string{
-				"*",
-			},
-		},
-		{
-			APIGroups: []string{
-				"apps",
-			},
-			Resources: []string{
-				"daemonsets",
-			},
-			ResourceNames: []string{
-				"compute-node-operator",
-			},
-			Verbs: []string{
+				"create",
 				"delete",
+				"get",
+				"list",
+				"patch",
 				"update",
-			},
-		},
-		{
-			APIGroups: []string{
-				"machine.openshift.io",
-			},
-			Resources: []string{
-				"machinesets",
-			},
-			Verbs: []string{
-				"*",
-			},
-		},
-		{
-			APIGroups: []string{
-				"machineconfiguration.openshift.io",
-			},
-			Resources: []string{
-				"*",
-			},
-			Verbs: []string{
-				"*",
+				"watch",
 			},
 		},
 		{
@@ -288,8 +273,8 @@ func getOperatorRules() *[]rbacv1.PolicyRule {
 				"servicemonitors",
 			},
 			Verbs: []string{
-				"get",
 				"create",
+				"get",
 			},
 		},
 		{
@@ -308,7 +293,85 @@ func getOperatorRules() *[]rbacv1.PolicyRule {
 		},
 		{
 			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"pods",
+			},
+			Verbs: []string{
+				"get",
+			},
+		},
+		{
+			APIGroups: []string{
+				"apps",
+			},
+			Resources: []string{
+				"replicasets",
+				"deployments",
+			},
+			Verbs: []string{
+				"get",
+			},
+		},
+		{
+			APIGroups: []string{
 				"compute-node.openstack.org",
+			},
+			Resources: []string{
+				"*",
+			},
+			Verbs: []string{
+				"create",
+				"delete",
+				"get",
+				"list",
+				"patch",
+				"update",
+				"watch",
+			},
+		},
+		{
+			APIGroups: []string{
+				"nova.openstack.org",
+			},
+			Resources: []string{
+				"novacomputes",
+				"virtlogds",
+				"libvirtds",
+				"iscsids",
+				"novamigrationtargets",
+			},
+			Verbs: []string{
+				"create",
+				"delete",
+				"get",
+				"list",
+				"patch",
+				"update",
+			},
+		},
+		{
+			APIGroups: []string{
+				"neutron.openstack.org",
+			},
+			Resources: []string{
+				"ovsnodeosps",
+				"ovncontrollers",
+			},
+			Verbs: []string{
+				"create",
+				"delete",
+				"get",
+				"list",
+				"patch",
+				"update",
+			},
+		},
+		{
+			APIGroups: []string{
+				"machine.openshift.io",
+				"machineconfiguration.openshift.io",
 			},
 			Resources: []string{
 				"*",
@@ -325,14 +388,29 @@ func getOperatorRules() *[]rbacv1.PolicyRule {
 				"jobs",
 			},
 			Verbs: []string{
-				"*",
+				"create",
+				"delete",
+				"get",
+				"list",
+				"patch",
+				"update",
+				"watch",
 			},
 		},
-	}
-}
-
-func getOperatorClusterRules() *[]rbacv1.PolicyRule {
-	return &[]rbacv1.PolicyRule{
+		{
+			APIGroups: []string{
+				"security.openshift.io",
+			},
+			Resources: []string{
+				"securitycontextconstraints",
+			},
+			ResourceNames: []string{
+				"hostnetwork",
+			},
+			Verbs: []string{
+				"use",
+			},
+		},
 		{
 			APIGroups: []string{
 				"rbac.authorization.k8s.io",
@@ -350,35 +428,6 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 		},
 		{
 			APIGroups: []string{
-				"",
-			},
-			Resources: []string{
-				"namespaces",
-			},
-			Verbs: []string{
-				"get",
-				"list",
-				"watch",
-				"patch",
-			},
-		},
-		{
-			APIGroups: []string{
-				"",
-			},
-			Resources: []string{
-				"events",
-			},
-			Verbs: []string{
-				"list",
-				"watch",
-				"create",
-				"patch",
-				"update",
-			},
-		},
-		{
-			APIGroups: []string{
 				"rbac.authorization.k8s.io",
 			},
 			Resources: []string{
@@ -433,20 +482,6 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 				"get",
 				"watch",
 				"create",
-			},
-		},
-		{
-			APIGroups: []string{
-				"apps",
-			},
-			Resources: []string{
-				"deployments/finalizers",
-			},
-			ResourceNames: []string{
-				"compute-node-operator",
-			},
-			Verbs: []string{
-				"update",
 			},
 		},
 		{
@@ -459,20 +494,6 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 			Verbs: []string{
 				"get",
 				"list",
-				"watch",
-			},
-		},
-		{
-			APIGroups: []string{
-				"",
-			},
-			Resources: []string{
-				"nodes",
-			},
-			Verbs: []string{
-				"get",
-				"list",
-				"update",
 				"watch",
 			},
 		},

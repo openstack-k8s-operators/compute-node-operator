@@ -15,6 +15,8 @@ limitations under the License.
 package helper
 
 import (
+	"fmt"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -91,15 +93,11 @@ func CreateOperatorContainer(name, image, verbosity string, pullPolicy corev1.Pu
 }
 
 // CreateOperatorEnvVar creates the operator container environment variables based on the passed in parameters
-func CreateOperatorEnvVar(repo, deployClusterResources, operatorImage, pullPolicy string) *[]corev1.EnvVar {
+func CreateOperatorEnvVar(repo, deployClusterResources, operatorImage, pullPolicy string, namespace string) *[]corev1.EnvVar {
 	return &[]corev1.EnvVar{
 		{
-			Name: "WATCH_NAMESPACE",
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.namespace",
-				},
-			},
+			Name:  "WATCH_NAMESPACE",
+			Value: fmt.Sprintf(namespace + ",openshift-machine-api"),
 		},
 		{
 			Name: "POD_NAME",

@@ -5,7 +5,7 @@ metadata:
 subjects:
 - kind: ServiceAccount
   name: compute-node-operator
-  namespace: openshift-machine-api
+  namespace: openstack
 roleRef:
   kind: ClusterRole
   name: compute-node-operator
