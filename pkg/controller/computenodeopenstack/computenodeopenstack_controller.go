@@ -709,6 +709,14 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 		},
 	}
 
+	// Get all nodes where the machines tagged with the DeletionTimestamp
+	deletedTaggedNodes, err := getDeletedOspWorkerNodes(c, instance)
+	if err != nil {
+		return err
+	}
+
+	envVars = append(envVars, corev1.EnvVar{Name: "DISABLE_COMPUTE_SERVICES", Value: strings.Join(deletedTaggedNodes, " ")})
+
 	// Env vars to connect to openstack endpoints
 	// mschuppert - note: 	the format of the secret/configmap might change when the OSP controller
 	//			operators who in the end should populate this information are done. So
@@ -1031,4 +1039,28 @@ func getOpenStackClientInformation(r *ReconcileComputeNodeOpenStack, instance *c
 		return nil, nil, fmt.Errorf("Failed to find the configmap %s holding information required to connect to the OSP API endpoints: %v", openStackClientConfigMap, err)
 	}
 	return openstackClientAdmin, openstackClient, nil
+}
+
+func getDeletedOspWorkerNodes(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) ([]string, error) {
+	deletedOspWorkerNodes := []string{}
+	machineList := &machinev1beta1.MachineList{}
+	listOpts := []client.ListOption{
+		client.InNamespace("openshift-machine-api"),
+		client.MatchingLabels{"machine.openshift.io/cluster-api-machine-role": instance.Spec.RoleName},
+	}
+	err := c.List(context.TODO(), machineList, listOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, machine := range machineList.Items {
+		if machine.Status.NodeRef == nil {
+			continue
+		}
+		deletionTimestamp := machine.DeletionTimestamp
+		if deletionTimestamp != nil {
+			deletedOspWorkerNodes = append(deletedOspWorkerNodes, machine.Status.NodeRef.Name)
+		}
+	}
+	return deletedOspWorkerNodes, nil
 }

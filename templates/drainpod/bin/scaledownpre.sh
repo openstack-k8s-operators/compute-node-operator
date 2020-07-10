@@ -23,26 +23,37 @@ if [ -z "${SCALE_DOWN_NODE_NAME}" ] ; then
   exit 1
 fi
 
-# Disable compute service
-COMPUTE_SERVICE_STATUS=$(openstack compute service list --long \
+if [ -z "${DISABLE_COMPUTE_SERVICES}" ] ; then
+  echo "No compute host provided to disable nova-compute service!"
+  exit 1
+fi
+
+# Disable compute services
+# Disable all compute worker nodes to not have the nova-scheduler
+# to pick a node which is going to be removed next.
+for COMPUTE_SERVICE in ${DISABLE_COMPUTE_SERVICES}; do
+  # Disable compute service
+  COMPUTE_SERVICE_STATUS=$(openstack compute service list --long \
                           --service nova-compute \
-                          --host ${SCALE_DOWN_NODE_NAME} \
+                          --host ${COMPUTE_SERVICE} \
                           -f value -c Status)
 
-while [ "${COMPUTE_SERVICE_STATUS}" = "enabled" ]; do
-  openstack compute service set --disable \
-    --disable-reason "scaling down: ${SCALE_DOWN_NODE_NAME}" \
-    ${SCALE_DOWN_NODE_NAME} nova-compute
-  sleep 2
-  COMPUTE_SERVICE_STATUS=$(openstack compute service list --long \
-                            --service nova-compute \
-                            --host ${SCALE_DOWN_NODE_NAME} \
-                            -f value -c Status)
-done
-openstack compute service list \
-  --long --service nova-compute --host ${SCALE_DOWN_NODE_NAME}
+  while [ "${COMPUTE_SERVICE_STATUS}" = "enabled" ]; do
+    openstack compute service set --disable \
+      --disable-reason "scaling down: ${COMPUTE_SERVICE}" \
+      ${COMPUTE_SERVICE} nova-compute
+    sleep 2
+    COMPUTE_SERVICE_STATUS=$(openstack compute service list --long \
+                              --service nova-compute \
+                              --host ${COMPUTE_SERVICE} \
+                              -f value -c Status)
+  done
 
-# get all instances on the host which are ACTIVE
+  openstack compute service list \
+    --long --service nova-compute --host ${COMPUTE_SERVICE}
+done
+
+# get all instances of the host which are ACTIVE
 # This does _NOT_ handle instances in SHUTOFF, ERROR or any other
 # state than ACTIVE
 INSTANCES=$(openstack server list --long --all-projects -f value \
