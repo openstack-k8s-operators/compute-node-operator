@@ -133,17 +133,52 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 
 	// Fetch the ComputeNodeOpenStack instance
 	instance := &computenodev1alpha1.ComputeNodeOpenStack{}
+
 	err := r.client.Get(context.TODO(), request.NamespacedName, instance)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			// Request object not found, could have been deleted after reconcile request.
-			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
-			// Return and don't requeue
-			return reconcile.Result{}, nil
-		}
 		// Error reading the object - requeue the request.
-		return reconcile.Result{}, err
+		// ignore not found errors, since they can't be fixed by an immediate
+		// requeue, and we can get them on deleted requests which we now
+		// handle using finalizer.
+		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
+
+	finalizerName := "compute-node-operator-" + instance.Spec.RoleName
+	// if deletion timestamp is set on the instance object, the CR got deleted
+        if instance.ObjectMeta.DeletionTimestamp.IsZero() {
+		// if it is a new instance, add the finalizer
+                if !controllerutil.ContainsFinalizer(instance, finalizerName) {
+                        controllerutil.AddFinalizer(instance, finalizerName)
+                        err = r.client.Update(context.TODO(), instance)
+                        if err != nil {
+                               return reconcile.Result{}, err
+			}
+			log.Info(fmt.Sprintf("Finalizer %s added to CR %s", finalizerName, instance.Name))
+                }
+        } else {
+		// 1. check if finalizer is there
+		// Reconcile if finalizer got already removed
+                if !controllerutil.ContainsFinalizer(instance, finalizerName) {
+                        return reconcile.Result{}, nil
+                }
+
+		// 2. cleanup resources created by operator
+		// a. - delete blocker pods for the compute worker nodes
+		//    - run cleanup jobs to remove compute node service entries in OSP control plane
+                log.Info(fmt.Sprintf("CR %s delete, running cleanup", instance.Name))
+                err := deleteAllBlockerPodFinalizer(r, instance)
+                if err != nil {
+                        return reconcile.Result{}, err
+		}
+		
+		// 3. as last step remove the finalizer on the operator CR to finish delete
+                controllerutil.RemoveFinalizer(instance, finalizerName)
+                err = r.client.Update(context.TODO(), instance)
+                if err != nil {
+                        return reconcile.Result{}, err
+                }
+                return reconcile.Result{}, nil
+        }
 
 	// ScriptsConfigMap
 	err = ensureComputeNodeOpenStackScriptsConfigMap(r, instance, strings.ToLower(instance.Kind)+"-scripts")
@@ -600,6 +635,8 @@ func getPreviousNodeStatus(nodeName string, instance *computenodev1alpha1.Comput
 }
 
 func createBlockerPod(c client.Client, nodeName string, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	var terminationGracePeriodSeconds int64 = 0
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      nodeName + "-blocker-pod",
@@ -622,6 +659,7 @@ func createBlockerPod(c client.Client, nodeName string, instance *computenodev1a
 			Tolerations: []corev1.Toleration{{
 				Operator: "Exists",
 			}},
+			TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
 		},
 	}
 	oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
@@ -714,7 +752,12 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 	if err != nil {
 		return err
 	}
-
+	// In case of CR delete the machines are not yet marked as deleted at this stage.
+	// For now adding the current node to the deletedTaggedNodes
+	// TODO: review this when we handle the owner ref change in non openstack namespace next.
+	if len(deletedTaggedNodes) == 0 {
+		deletedTaggedNodes = append(deletedTaggedNodes, nodeName)
+	}
 	envVars = append(envVars, corev1.EnvVar{Name: "DISABLE_COMPUTE_SERVICES", Value: strings.Join(deletedTaggedNodes, " ")})
 
 	// Env vars to connect to openstack endpoints
@@ -1063,4 +1106,94 @@ func getDeletedOspWorkerNodes(c client.Client, instance *computenodev1alpha1.Com
 		}
 	}
 	return deletedOspWorkerNodes, nil
+}
+
+func deleteAllBlockerPodFinalizer(r *ReconcileComputeNodeOpenStack, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	// get all nodes for the current role
+        workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
+        nodeList, err := r.kclient.CoreV1().Nodes().List(metav1.ListOptions{LabelSelector: workerLabel})
+        if err != nil {
+                return err
+        }
+
+	// if nodes already got scaled down, no need to run cleanup
+	if len(nodeList.Items) == 0 {
+		return nil
+	}
+
+	// get the openstack client information required by the POST job to connect to the OSP api
+        openStackClientAdmin, openStackClient, err := getOpenStackClientInformation(r, instance)
+        if err != nil {
+                return err
+	}
+
+	/* Steps to delete the drain the node
+	1. Predraining: disable nova service, (optional) migrate VMs, wait until there is no VMs
+	2. Postdraining: taint the node, remove nova-compute from nova services and placement
+	3. Remove cleanup jobs, blocker pod finalizer, and update nodesToDelete status information
+	*/
+	// 1. NodePreDrain
+	allNodesPreDrained := true
+	for _, node := range nodeList.Items {
+		nodePreDrained, err := ensureNodePreDrain(r.client, node.Name, instance, openStackClientAdmin, openStackClient)
+		if err != nil {
+			return err
+		}
+		if !nodePreDrained {
+			allNodesPreDrained = false
+			continue
+		}
+		log.Info(fmt.Sprintf("Pre draining job completed for node: %s", node.Name))
+	}
+	if !allNodesPreDrained {
+		return fmt.Errorf("Not all Pre NodeDrain jobs finished, reconciling")
+	}
+	log.Info(fmt.Sprintf("All Pre NodeDrain jobs finished"))
+
+	// 2. NodePostDrain
+	allNodesPostDrained := true
+	for _, node := range nodeList.Items {
+		// a) taint all the nodes to have OSP pods stopped
+		err = addToBeRemovedTaint(r.kclient, node)
+                if err != nil {
+                        return err
+		}
+
+		// b) run post drain job to get the nova-compute service cleanup up in the OSP control plane
+                nodePostDrained, err := ensureNodePostDrain(r.client, node.Name, instance, openStackClientAdmin, openStackClient)
+                if err != nil {
+                        return err
+		}
+		if !nodePostDrained {
+			allNodesPostDrained = false
+			continue
+		}
+		log.Info(fmt.Sprintf("Post draining job completed for node: %s", node.Name))
+	}
+	if !allNodesPostDrained {
+		return fmt.Errorf("Not all Post NodeDrain jobs finished, reconciling")
+	}
+	log.Info(fmt.Sprintf("All Post NodeDrain jobs finished"))
+
+	// 3. Cleanup finished POST drain jobs
+	for _, node := range nodeList.Items {
+		log.Info(fmt.Sprintf("Deleting draining jobs for node: %s", node.Name))
+		err = deleteJobWithName(r.client, r.kclient, instance, node.Name+"-drain-job-pre")
+		if err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+                log.Info(fmt.Sprintf("Deleting draining jobs for node: %s", node.Name))
+                err = deleteJobWithName(r.client, r.kclient, instance, node.Name+"-drain-job-post")
+                if err != nil && !errors.IsNotFound(err) {
+                        return err
+                }
+
+		// delete blocker pods to proceed with node removal from OCP
+                log.Info(fmt.Sprintf("Deleting blocker pod finalizer for node: %s", node.Name))
+                err = deleteBlockerPodFinalizer(r.client, node.Name, instance)
+                if err != nil {
+                        return err
+                }
+        }
+        return nil
 }
