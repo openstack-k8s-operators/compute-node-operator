@@ -7,6 +7,6 @@ spec:
   ovsNodeOspImage: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:7d6ba1bcc4f403733e44cd2a008dafe1887501f7a3c74084566a4f4d1e46250d
   serviceAccount: neutron-operator
   roleName: {{ .WorkerOspRole }}
-  ovnSbRemote: 192.168.25.100 # REMOVE IT, and read it from configmap/secret as in nova operator
+  ovnSbRemote: tcp:192.168.25.100:6642 # REMOVE IT, and read it from configmap/secret as in nova operator
   ovsLogLevel: info
   nic: {{ .Nic }}
