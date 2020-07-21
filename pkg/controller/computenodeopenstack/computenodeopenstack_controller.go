@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	uns "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -36,6 +37,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
+)
+
+const (
+	ownerUIDLabelSelector       = "computenodeopenstacks.compute-node.openstack.org/uid"
+	ownerNameSpaceLabelSelector = "computenodeopenstacks.compute-node.openstack.org/namespace"
+	ownerNameLabelSelector      = "computenodeopenstacks.compute-node.openstack.org/name"
 )
 
 var log = logf.Log.WithName("controller_computenodeopenstack")
@@ -82,14 +89,6 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
-	err = c.Watch(&source.Kind{Type: &machinev1beta1.MachineSet{}}, &handler.EnqueueRequestForOwner{
-		IsController: true,
-		OwnerType:    &computenodev1alpha1.ComputeNodeOpenStack{},
-	})
-	if err != nil {
-		return err
-	}
-
 	err = c.Watch(&source.Kind{Type: &batchv1.Job{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &computenodev1alpha1.ComputeNodeOpenStack{},
@@ -102,6 +101,42 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	err = c.Watch(&source.Kind{Type: &corev1.ConfigMap{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &computenodev1alpha1.ComputeNodeOpenStack{},
+	})
+	if err != nil {
+		return err
+	}
+
+	// watch for MachineSet with compute-node-operator CR owner ref
+	ospMachineSetFn := handler.ToRequestsFunc(func(o handler.MapObject) []reconcile.Request {
+		cc := mgr.GetClient()
+		result := []reconcile.Request{}
+		ms := &machinev1beta1.MachineSet{}
+		key := client.ObjectKey{Namespace: o.Meta.GetNamespace(), Name: o.Meta.GetName()}
+		err := cc.Get(context.Background(), key, ms)
+		if err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Unable to retrieve MachineSet %v")
+			return nil
+		}
+
+		label := ms.ObjectMeta.GetLabels()
+		// verify object has ownerUIDLabelSelector
+		if uid, ok := label[ownerUIDLabelSelector]; ok {
+			log.Info(fmt.Sprintf("MachineSet object %s marked with OSP owner ref: %s", o.Meta.GetName(), uid))
+			// return namespace and Name of CR
+			name := client.ObjectKey{
+				Namespace: label[ownerNameSpaceLabelSelector],
+				Name:      label[ownerNameLabelSelector],
+			}
+			result = append(result, reconcile.Request{NamespacedName: name})
+		}
+		if len(result) > 0 {
+			return result
+		}
+		return nil
+	})
+
+	err = c.Watch(&source.Kind{Type: &machinev1beta1.MachineSet{}}, &handler.EnqueueRequestsFromMapFunc{
+		ToRequests: ospMachineSetFn,
 	})
 	if err != nil {
 		return err
@@ -145,40 +180,52 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 
 	finalizerName := "compute-node-operator-" + instance.Spec.RoleName
 	// if deletion timestamp is set on the instance object, the CR got deleted
-        if instance.ObjectMeta.DeletionTimestamp.IsZero() {
+	if instance.ObjectMeta.DeletionTimestamp.IsZero() {
 		// if it is a new instance, add the finalizer
-                if !controllerutil.ContainsFinalizer(instance, finalizerName) {
-                        controllerutil.AddFinalizer(instance, finalizerName)
-                        err = r.client.Update(context.TODO(), instance)
-                        if err != nil {
-                               return reconcile.Result{}, err
+		if !controllerutil.ContainsFinalizer(instance, finalizerName) {
+			controllerutil.AddFinalizer(instance, finalizerName)
+			err = r.client.Update(context.TODO(), instance)
+			if err != nil {
+				return reconcile.Result{}, err
 			}
 			log.Info(fmt.Sprintf("Finalizer %s added to CR %s", finalizerName, instance.Name))
-                }
-        } else {
+		}
+	} else {
 		// 1. check if finalizer is there
 		// Reconcile if finalizer got already removed
-                if !controllerutil.ContainsFinalizer(instance, finalizerName) {
-                        return reconcile.Result{}, nil
-                }
+		if !controllerutil.ContainsFinalizer(instance, finalizerName) {
+			return reconcile.Result{}, nil
+		}
 
 		// 2. cleanup resources created by operator
 		// a. - delete blocker pods for the compute worker nodes
 		//    - run cleanup jobs to remove compute node service entries in OSP control plane
-                log.Info(fmt.Sprintf("CR %s delete, running cleanup", instance.Name))
-                err := deleteAllBlockerPodFinalizer(r, instance)
-                if err != nil {
-                        return reconcile.Result{}, err
+		log.Info(fmt.Sprintf("CR %s delete, running cleanup", instance.Name))
+		err := deleteAllBlockerPodFinalizer(r, instance)
+		if err != nil {
+			return reconcile.Result{}, err
 		}
-		
+
+		// b. Delete objects in non openstack namespace which have the owner reference label
+		//    - remove infra daemonsets with owner reference label
+		//    - cleanup machineset and secret objects in openshift-machine-api namespace
+		err = deleteOwnerRefLabeledObjects(r, instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+
+		// on not namespaced objects we still set the owner ref and let the default process to clean those
+		// - machineconfigpool
+		// - machineconfig
+
 		// 3. as last step remove the finalizer on the operator CR to finish delete
-                controllerutil.RemoveFinalizer(instance, finalizerName)
-                err = r.client.Update(context.TODO(), instance)
-                if err != nil {
-                        return reconcile.Result{}, err
-                }
-                return reconcile.Result{}, nil
-        }
+		controllerutil.RemoveFinalizer(instance, finalizerName)
+		err = r.client.Update(context.TODO(), instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		return reconcile.Result{}, nil
+	}
 
 	// ScriptsConfigMap
 	err = ensureComputeNodeOpenStackScriptsConfigMap(r, instance, strings.ToLower(instance.Kind)+"-scripts")
@@ -249,10 +296,20 @@ func (r *ReconcileComputeNodeOpenStack) Reconcile(request reconcile.Request) (re
 	objs = append(objs, manifests...)
 
 	// Apply the objects to the cluster
+	oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
+	labelSelector := map[string]string{
+		ownerUIDLabelSelector:       string(instance.UID),
+		ownerNameSpaceLabelSelector: instance.Namespace,
+		ownerNameLabelSelector:      instance.Name,
+	}
 	for _, obj := range objs {
-		// Set ComputeOpenStack instance as the owner and controller
-		oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
-		obj.SetOwnerReferences([]metav1.OwnerReference{*oref})
+		// Set owner reference on objects on openstack namespace and non namespaces objects
+		if obj.GetNamespace() == instance.Namespace || obj.GetNamespace() == "" {
+			obj.SetOwnerReferences([]metav1.OwnerReference{*oref})
+		}
+		// merge owner ref label into labels on the objects
+		obj.SetLabels(labels.Merge(obj.GetLabels(), labelSelector))
+		objs = append(objs, obj)
 
 		// Open question: should an error here indicate we will never retry?
 		if err := bindatautil.ApplyObject(context.TODO(), r.client, obj); err != nil {
@@ -420,13 +477,14 @@ func newDaemonSet(instance *computenodev1alpha1.ComputeNodeOpenStack, ds *appsv1
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			Labels: map[string]string{
+				ownerUIDLabelSelector:       string(instance.UID),
+				ownerNameSpaceLabelSelector: instance.Namespace,
+				ownerNameLabelSelector:      instance.Name,
+			},
 		},
 		Spec: ds.Spec,
 	}
-
-	// Set OwnerReference
-	oref := metav1.NewControllerRef(instance, instance.GroupVersionKind())
-	daemonSet.SetOwnerReferences([]metav1.OwnerReference{*oref})
 
 	// Update template name
 	daemonSet.Spec.Template.ObjectMeta.Name = name
@@ -1110,11 +1168,11 @@ func getDeletedOspWorkerNodes(c client.Client, instance *computenodev1alpha1.Com
 
 func deleteAllBlockerPodFinalizer(r *ReconcileComputeNodeOpenStack, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
 	// get all nodes for the current role
-        workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
-        nodeList, err := r.kclient.CoreV1().Nodes().List(metav1.ListOptions{LabelSelector: workerLabel})
-        if err != nil {
-                return err
-        }
+	workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
+	nodeList, err := r.kclient.CoreV1().Nodes().List(metav1.ListOptions{LabelSelector: workerLabel})
+	if err != nil {
+		return err
+	}
 
 	// if nodes already got scaled down, no need to run cleanup
 	if len(nodeList.Items) == 0 {
@@ -1122,9 +1180,9 @@ func deleteAllBlockerPodFinalizer(r *ReconcileComputeNodeOpenStack, instance *co
 	}
 
 	// get the openstack client information required by the POST job to connect to the OSP api
-        openStackClientAdmin, openStackClient, err := getOpenStackClientInformation(r, instance)
-        if err != nil {
-                return err
+	openStackClientAdmin, openStackClient, err := getOpenStackClientInformation(r, instance)
+	if err != nil {
+		return err
 	}
 
 	/* Steps to delete the drain the node
@@ -1155,14 +1213,14 @@ func deleteAllBlockerPodFinalizer(r *ReconcileComputeNodeOpenStack, instance *co
 	for _, node := range nodeList.Items {
 		// a) taint all the nodes to have OSP pods stopped
 		err = addToBeRemovedTaint(r.kclient, node)
-                if err != nil {
-                        return err
+		if err != nil {
+			return err
 		}
 
 		// b) run post drain job to get the nova-compute service cleanup up in the OSP control plane
-                nodePostDrained, err := ensureNodePostDrain(r.client, node.Name, instance, openStackClientAdmin, openStackClient)
-                if err != nil {
-                        return err
+		nodePostDrained, err := ensureNodePostDrain(r.client, node.Name, instance, openStackClientAdmin, openStackClient)
+		if err != nil {
+			return err
 		}
 		if !nodePostDrained {
 			allNodesPostDrained = false
@@ -1182,18 +1240,72 @@ func deleteAllBlockerPodFinalizer(r *ReconcileComputeNodeOpenStack, instance *co
 		if err != nil && !errors.IsNotFound(err) {
 			return err
 		}
-                log.Info(fmt.Sprintf("Deleting draining jobs for node: %s", node.Name))
-                err = deleteJobWithName(r.client, r.kclient, instance, node.Name+"-drain-job-post")
-                if err != nil && !errors.IsNotFound(err) {
-                        return err
-                }
+		log.Info(fmt.Sprintf("Deleting draining jobs for node: %s", node.Name))
+		err = deleteJobWithName(r.client, r.kclient, instance, node.Name+"-drain-job-post")
+		if err != nil && !errors.IsNotFound(err) {
+			return err
+		}
 
 		// delete blocker pods to proceed with node removal from OCP
-                log.Info(fmt.Sprintf("Deleting blocker pod finalizer for node: %s", node.Name))
-                err = deleteBlockerPodFinalizer(r.client, node.Name, instance)
-                if err != nil {
-                        return err
-                }
-        }
-        return nil
+		log.Info(fmt.Sprintf("Deleting blocker pod finalizer for node: %s", node.Name))
+		err = deleteBlockerPodFinalizer(r.client, node.Name, instance)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+/* deleteOwnerRefLabeledObjects - cleans up namespaced objects outside the default namespace
+   using the owner reference labels added.
+   List of objects which get cleaned:
+   - infraDaemonSets, namespace information from CR.Spec + CR.Status
+   - machineset, openshift-machine-api namespace
+   - user-data secret, openshift-machine-api namespace
+*/
+func deleteOwnerRefLabeledObjects(r *ReconcileComputeNodeOpenStack, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	labelSelectorMap := map[string]string{
+		ownerUIDLabelSelector:       string(instance.UID),
+		ownerNameSpaceLabelSelector: instance.Namespace,
+		ownerNameLabelSelector:      instance.Name,
+	}
+	labelSelectorString := labels.Set(labelSelectorMap).String()
+
+	// remove infra daemonsets with owner reference label
+	infraDaemonSets := instance.Status.InfraDaemonSets
+	infraDaemonSets = append(infraDaemonSets, instance.Spec.InfraDaemonSets...)
+	for _, statusDsInfo := range infraDaemonSets {
+		err := r.kclient.AppsV1().DaemonSets(statusDsInfo.Namespace).DeleteCollection(&metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelectorString})
+		if err != nil && errors.IsNotFound(err) {
+			// Already deleted
+			continue
+		} else if err != nil {
+			return err
+		}
+		log.Info(fmt.Sprintf("Infra Daemonset deleted - name: %s - namespace: %s", statusDsInfo.Name+"-"+instance.Spec.RoleName, statusDsInfo.Namespace))
+	}
+
+	// delete machineset in openshift-machine-api namespace
+	machineSets, err := computenodeopenstack.GetMachineSetsWithLabel(r.client, instance, labelSelectorMap, "openshift-machine-api")
+	if err != nil {
+		return err
+	}
+	for idx := range machineSets.Items {
+		ms := &machineSets.Items[idx]
+
+		err = r.client.Delete(context.Background(), ms, &client.DeleteOptions{})
+		if err != nil {
+			return err
+		}
+		log.Info(fmt.Sprintf("MachineSet deleted: name %s - %s", ms.Name, ms.UID))
+	}
+
+	// delete user-data secret in openshift-machine-api namespace
+	err = r.kclient.CoreV1().Secrets("openshift-machine-api").DeleteCollection(&metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelectorString})
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	log.Info(fmt.Sprintf("Machine user data Secret deleted for %s - %s", instance.Name, instance.Spec.RoleName))
+
+	return nil
 }
