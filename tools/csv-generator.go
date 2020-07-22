@@ -224,6 +224,7 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 			Verbs: []string{
 				"create",
 				"delete",
+                                "deletecollection",
 				"get",
 				"list",
 				"patch",
@@ -258,6 +259,7 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 			Verbs: []string{
 				"create",
 				"delete",
+                                "deletecollection",
 				"get",
 				"list",
 				"patch",
