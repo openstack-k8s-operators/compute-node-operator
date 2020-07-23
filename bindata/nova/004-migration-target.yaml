@@ -7,5 +7,5 @@ spec:
   commonConfigMap: {{ .CommonConfigMap }}
   novaComputeImage: docker.io/tripleotrain/rhel-binary-nova-compute:current-tripleo
   roleName: {{ .WorkerOspRole }}
-  serviceAccount: nova-operator
+  serviceAccount: nova
   sshdPort: {{ .SshdPort }}
