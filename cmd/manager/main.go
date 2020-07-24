@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
+	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
 )
 
 // Change below variables to serve metrics on different host or port.
@@ -127,6 +128,12 @@ func main() {
 
 	// add MachineSet API scheme
 	if err := machinev1beta1.AddToScheme(mgr.GetScheme()); err != nil {
+		log.Error(err, "")
+		os.Exit(1)
+	}
+
+	// add MachineConfigPool API scheme
+	if err := mcfgv1.AddToScheme(mgr.GetScheme()); err != nil {
 		log.Error(err, "")
 		os.Exit(1)
 	}
