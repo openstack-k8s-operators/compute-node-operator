@@ -6,4 +6,4 @@ metadata:
 spec:
   novaLibvirtImage: quay.io/openstack-k8s-operators/nova-libvirt:latest
   roleName: {{ .WorkerOspRole }}
-  serviceAccount: nova-operator
+  serviceAccount: nova
