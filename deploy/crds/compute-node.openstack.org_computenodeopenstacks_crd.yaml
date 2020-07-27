@@ -151,6 +151,9 @@ spec:
             selinuxDisabled:
               description: Manage selinux - Defaults to false
               type: boolean
+            serviceAccount:
+              description: service account used to create pods
+              type: string
             workers:
               description: Number of workers
               format: int32
@@ -164,6 +167,7 @@ spec:
           - openStackClientAdminSecret
           - openStackClientConfigMap
           - roleName
+          - serviceAccount
           type: object
         status:
           description: ComputeNodeOpenStackStatus defines the observed state of ComputeNodeOpenStack

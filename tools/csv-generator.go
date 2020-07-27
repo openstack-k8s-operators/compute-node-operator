@@ -90,12 +90,17 @@ Install and configure OpenStack Compute nodes.
 		data.ImagePullPolicy)
 
 	clusterRules := getOperatorClusterRules()
+	serviceRules := getServiceRules()
 
 	strategySpec := csvv1.StrategyDetailsDeployment{
 		ClusterPermissions: []csvv1.StrategyDeploymentPermissions{
 			{
 				ServiceAccountName: "compute-node-operator",
 				Rules:              *clusterRules,
+			},
+			{
+				ServiceAccountName: "compute-node",
+				Rules:              *serviceRules,
 			},
 		},
 		DeploymentSpecs: []csvv1.StrategyDeploymentSpec{
@@ -224,7 +229,7 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 			Verbs: []string{
 				"create",
 				"delete",
-                                "deletecollection",
+				"deletecollection",
 				"get",
 				"list",
 				"patch",
@@ -259,7 +264,7 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 			Verbs: []string{
 				"create",
 				"delete",
-                                "deletecollection",
+				"deletecollection",
 				"get",
 				"list",
 				"patch",
@@ -401,20 +406,6 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 		},
 		{
 			APIGroups: []string{
-				"security.openshift.io",
-			},
-			Resources: []string{
-				"securitycontextconstraints",
-			},
-			ResourceNames: []string{
-				"hostnetwork",
-			},
-			Verbs: []string{
-				"use",
-			},
-		},
-		{
-			APIGroups: []string{
 				"rbac.authorization.k8s.io",
 			},
 			Resources: []string{
@@ -497,6 +488,36 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 				"get",
 				"list",
 				"watch",
+			},
+		},
+	}
+}
+
+func getServiceRules() *[]rbacv1.PolicyRule {
+	return &[]rbacv1.PolicyRule{
+		{
+			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"pods",
+			},
+			Verbs: []string{
+				"*",
+			},
+		},
+		{
+			APIGroups: []string{
+				"security.openshift.io",
+			},
+			Resources: []string{
+				"securitycontextconstraints",
+			},
+			ResourceNames: []string{
+				"hostnetwork",
+			},
+			Verbs: []string{
+				"use",
 			},
 		},
 	}
