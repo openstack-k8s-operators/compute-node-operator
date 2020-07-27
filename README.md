@@ -174,19 +174,13 @@ The following command will show which compute worker node got disabled to be rem
 
 #### Remove a specific compute worker node
 
-Edit the computenodeopenstack CR, lower the workers number and add a `nodesToDelete` section in the spec with the details of the worker node which should be removed:
+Annotate the machine object corresponding to the node to be removed:
 
+    oc get -n openshift-machine-api machine -o wide
+    oc annotate -n openshift-machine-api machines <machine-name> machine.openshift.io/cluster-api-delete-machine=1
+
+Edit the computenodeopenstack CR, lower the workers number, save and exit:
     oc -n openstack edit computenodeopenstacks.compute-node.openstack.org example-computenodeopenstack
-
-Modify the number of `workers` and add the `nodesToDelete` section to the spec:
-
-    nodesToDelete:
-    - name: <name of the compute worker node, e.g. worker-3>
-      # enable disable live migration for this node. If not specified the global setting from the
-      # `drain:` section is used. If not specified there, the default is `false`
-      drain: true/false
-
-Save and exit.
 
 ## Cleanup
 

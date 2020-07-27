@@ -36,8 +36,6 @@ type ComputeNodeOpenStackSpec struct {
 	Dedicated bool `json:"dedicated,omitempty"`
 	// Infra DaemonSets needed
 	InfraDaemonSets []InfraDaemonSet `json:"infraDaemonSets,omitempty"`
-	// Nodes to delete upon scale down
-	NodesToDelete []NodeToDelete `json:"nodesToDelete,omitempty"`
 	// openstackclient configmap which holds information to connect to OpenStack API
 	OpenStackClientConfigMap string `json:"openStackClientConfigMap"`
 	// user secrets used to connect to OpenStack API via openstackclient
@@ -99,14 +97,6 @@ type SriovConfig struct {
 	DevName string `json:"devName"`
 }
 
-// NodeToDelete defines the name of the node to delete and if automatic drain is needed
-type NodeToDelete struct {
-	// Node Name
-	Name string `json:"name"`
-	// Automatic draining of the node
-	Drain bool `json:"drain,omitempty"`
-}
-
 // Node defines the status of the associated nodes
 type Node struct {
 	// Node name
@@ -129,8 +119,6 @@ type ComputeNodeOpenStackStatus struct {
 	SpecMDS string `json:"specMDS"`
 	// Nodes information
 	Nodes []Node `json:"nodes,omitempty"`
-	// Nodes to delete upon scale down
-	NodesToDelete []NodeToDelete `json:"nodesToDelete,omitempty"`
 }
 
 // +kubebuilder:object:root=true
