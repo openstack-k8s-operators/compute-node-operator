@@ -24,7 +24,9 @@ spec:
     spec:
       providerSpec:
         value:
-          hostSelector: {}
+          hostSelector:
+            matchLabels:
+              ospRole: {{ .WorkerOspRole }}
           image:
             checksum: {{ .RhcosImageUrl }}.md5sum
             url: {{ .RhcosImageUrl }}
