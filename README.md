@@ -103,6 +103,7 @@ Create custom resource for a compute node which specifies the needed information
       k8sServiceIp: 172.30.0.1
       apiIntIp: 192.168.111.5
       workers: 1
+      selinuxDisabled: true
       corePinning: "4-7"   # Optional
       infraDaemonSets:     # Optional
       - name: multus

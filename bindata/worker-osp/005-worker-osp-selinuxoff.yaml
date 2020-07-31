@@ -1,3 +1,4 @@
+{{if .SelinuxDisabled}}
 apiVersion: machineconfiguration.openshift.io/v1
 kind: MachineConfig
 metadata:
@@ -9,4 +10,5 @@ spec:
     ignition:
       version: 2.2.0
   kernelArguments:
-    - selinux=0
+    - selinux={{ .SelinuxDisabled }}
+{{- end}}

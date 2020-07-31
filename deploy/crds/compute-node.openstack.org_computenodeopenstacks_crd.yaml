@@ -148,6 +148,9 @@ spec:
             roleName:
               description: Name of the worker role created for OSP computes
               type: string
+            selinuxDisabled:
+              description: Manage selinux - Defaults to false
+              type: boolean
             workers:
               description: Number of workers
               format: int32
