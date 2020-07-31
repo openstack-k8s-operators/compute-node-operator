@@ -745,8 +745,9 @@ func createBlockerPod(c client.Client, nodeName string, instance *computenodev1a
 				Image:   "busybox",
 				Command: []string{"/bin/sh", "-ec", "sleep infinity"},
 			}},
-			RestartPolicy: "Always",
-			HostNetwork:   true,
+			ServiceAccountName: instance.Spec.ServiceAccount,
+			RestartPolicy:      "Always",
+			HostNetwork:        true,
 			NodeSelector: map[string]string{
 				"kubernetes.io/hostname": nodeName,
 			},

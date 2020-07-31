@@ -10,3 +10,16 @@ roleRef:
   kind: ClusterRole
   name: compute-node-operator
   apiGroup: rbac.authorization.k8s.io
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: compute-node
+  namespace: openstack
+subjects:
+- kind: ServiceAccount
+  name: compute-node
+roleRef:
+  kind: Role
+  name: compute-node
+  apiGroup: rbac.authorization.k8s.io

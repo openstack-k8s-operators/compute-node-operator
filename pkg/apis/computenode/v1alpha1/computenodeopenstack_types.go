@@ -36,6 +36,8 @@ type ComputeNodeOpenStackSpec struct {
 	Network NeutronNetwork `json:"network,omitempty"`
 	// Manage selinux - Defaults to false
 	SelinuxDisabled bool `json:"selinuxDisabled,omitempty"`
+	// service account used to create pods
+	ServiceAccount string `json:"serviceAccount"`
 }
 
 // InfraDaemonSet defines the daemon set required
