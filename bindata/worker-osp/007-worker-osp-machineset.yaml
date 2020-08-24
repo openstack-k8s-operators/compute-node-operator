@@ -22,6 +22,15 @@ spec:
         machine.openshift.io/cluster-api-machine-type: {{ .WorkerOspRole }}
         machine.openshift.io/cluster-api-machineset: {{ .ClusterName }}-{{ .WorkerOspRole }}
     spec:
+      metadata:
+        labels:
+          node-role.kubernetes.io/{{ .WorkerOspRole }}: ""
+          network.operator.openshift.io/external-openvswitch: ""
+          beta.kubernetes.io/os: osp
+      taints:
+      - effect: NoSchedule
+        key: dedicated
+        value: {{ .WorkerOspRole }}
       providerSpec:
         value:
           hostSelector:
@@ -30,6 +39,5 @@ spec:
           image:
             checksum: {{ .RhcosImageUrl }}.md5sum
             url: {{ .RhcosImageUrl }}
-          metadata:
           userData:
             name: {{ .WorkerOspRole }}-user-data
