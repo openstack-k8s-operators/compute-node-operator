@@ -19,19 +19,20 @@ spec:
     commonConfigMap: common-config
     ospSecrets: osp-secrets
   network:
-    nic: "enp6s0"
+    nic: "enp2s0"
     bridgeMappings: ""
     mechanismDrivers: ""
     servicePlugins: ""
     sriov:
       devName: "test"
-  infraDaemonSets:
-  - name: multus
-    namespace: openshift-multus
-  - name: node-exporter
-    namespace: openshift-monitoring
-  - name: machine-config-daemon
-    namespace: openshift-machine-config-operator
+# needed if openshift-sdn is not running
+#  infraDaemonSets:
+#  - name: multus
+#    namespace: openshift-multus
+#  - name: node-exporter
+#    namespace: openshift-monitoring
+#  - name: machine-config-daemon
+#    namespace: openshift-machine-config-operator
   drain:
     drainPodImage: quay.io/openstack-k8s-operators/tripleo-deploy
     enabled: false

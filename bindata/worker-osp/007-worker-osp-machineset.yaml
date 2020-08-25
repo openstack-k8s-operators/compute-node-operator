@@ -26,7 +26,7 @@ spec:
         labels:
           node-role.kubernetes.io/{{ .WorkerOspRole }}: ""
           network.operator.openshift.io/external-openvswitch: ""
-          beta.kubernetes.io/os: osp
+          #beta.kubernetes.io/os: osp # only needed if we want to kick out openshift-sdn
       taints:
       - effect: NoSchedule
         key: dedicated
