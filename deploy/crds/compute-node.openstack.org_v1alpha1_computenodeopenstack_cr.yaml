@@ -8,8 +8,6 @@ spec:
   roleName: worker-osp
   clusterName: ostest
   baseWorkerMachineSetName: ostest-worker-0
-  k8sServiceIP: 172.30.0.1
-  apiIntIP: 192.168.111.5
   workers: 0
   dedicated: false
   selinuxDisabled: true

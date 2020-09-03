@@ -32,9 +32,6 @@ spec:
         spec:
           description: ComputeNodeOpenStackSpec defines the desired state of ComputeNodeOpenStack
           properties:
-            apiIntIP:
-              description: Internal Cluster API IP (app-int)
-              type: string
             baseWorkerMachineSetName:
               description: Base Worker MachineSet Name
               type: string
@@ -100,9 +97,6 @@ spec:
                 - namespace
                 type: object
               type: array
-            k8sServiceIP:
-              description: Kubernetes service cluster IP
-              type: string
             network:
               description: Network/Neutron configuration
               properties:
@@ -163,11 +157,9 @@ spec:
               format: int32
               type: integer
           required:
-          - apiIntIP
           - baseWorkerMachineSetName
           - clusterName
           - drain
-          - k8sServiceIP
           - openStackClientAdminSecret
           - openStackClientConfigMap
           - roleName
