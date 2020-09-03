@@ -358,6 +358,10 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	data.Data["K8sServiceIP"] = instance.Spec.K8sServiceIP
 	data.Data["APIIntIP"] = instance.Spec.APIIntIP
 	data.Data["Workers"] = instance.Spec.Workers
+	data.Data["Dedicated"] = false
+	if instance.Spec.Dedicated {
+		data.Data["Dedicated"] = instance.Spec.Dedicated
+	}
 
 	data.Data["Isolcpus"] = false
 	data.Data["SshdPort"] = 2022
@@ -382,7 +386,7 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 		data.Data["OspSecrets"] = instance.Spec.Compute.OspSecrets
 	}
 
-	data.Data["Nic"] = "enp6s0"
+	data.Data["Nic"] = "enp2s0"
 	if instance.Spec.Network.Nic != "" {
 		data.Data["Nic"] = instance.Spec.Network.Nic
 	}
