@@ -64,6 +64,10 @@ spec:
             corePinning:
               description: Cores Pinning
               type: string
+            dedicated:
+              description: Make or not the Node dedicated to OSP workloads (does not
+                account for infra pods)
+              type: boolean
             drain:
               description: Node draining configuration options
               properties:

@@ -20,6 +20,8 @@ type ComputeNodeOpenStackSpec struct {
 	Workers int32 `json:"workers,omitempty"`
 	// Cores Pinning
 	CorePinning string `json:"corePinning,omitempty"`
+	// Make or not the Node dedicated to OSP workloads (does not account for infra pods)
+	Dedicated bool `json:"dedicated,omitempty"`
 	// Infra DaemonSets needed
 	InfraDaemonSets []InfraDaemonSet `json:"infraDaemonSets,omitempty"`
 	// Nodes to delete upon scale down
