@@ -355,8 +355,6 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	data := bindatautil.MakeRenderData()
 	data.Data["ClusterName"] = instance.Spec.ClusterName
 	data.Data["WorkerOspRole"] = instance.Spec.RoleName
-	data.Data["K8sServiceIP"] = instance.Spec.K8sServiceIP
-	data.Data["APIIntIP"] = instance.Spec.APIIntIP
 	data.Data["Workers"] = instance.Spec.Workers
 	data.Data["Dedicated"] = false
 	if instance.Spec.Dedicated {

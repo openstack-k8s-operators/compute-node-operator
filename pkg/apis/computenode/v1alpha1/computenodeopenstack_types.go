@@ -12,10 +12,6 @@ type ComputeNodeOpenStackSpec struct {
 	ClusterName string `json:"clusterName"`
 	// Base Worker MachineSet Name
 	BaseWorkerMachineSetName string `json:"baseWorkerMachineSetName"`
-	// Kubernetes service cluster IP
-	K8sServiceIP string `json:"k8sServiceIP"`
-	// Internal Cluster API IP (app-int)
-	APIIntIP string `json:"apiIntIP"`
 	// Number of workers
 	Workers int32 `json:"workers,omitempty"`
 	// Cores Pinning
