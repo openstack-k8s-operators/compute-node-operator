@@ -1,4 +1,4 @@
-apiVersion: nova.openstack.org/v1
+apiVersion: nova.openstack.org/v1beta1
 kind: NovaCompute
 metadata:
   name: nova-compute-{{ .WorkerOspRole }}

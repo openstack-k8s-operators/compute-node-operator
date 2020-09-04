@@ -1,4 +1,4 @@
-apiVersion: nova.openstack.org/v1
+apiVersion: nova.openstack.org/v1beta1
 kind: Virtlogd
 metadata:
   name: virtlogd-{{ .WorkerOspRole }}
