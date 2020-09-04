@@ -4,8 +4,10 @@ metadata:
   name: ovs-node-osp-{{ .WorkerOspRole }}
   namespace: openstack
 spec:
-  ovsNodeOspImage: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:7d6ba1bcc4f403733e44cd2a008dafe1887501f7a3c74084566a4f4d1e46250d
+  ovsNodeOspImage: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:22bdb69931d709f1dddfd135c544589f1a1350669cfbc73b420d8278532caca1
   serviceAccount: neutron
   roleName: {{ .WorkerOspRole }}
   ovsLogLevel: info
   nic: {{ .Nic }}
+  gateway: {{ .NetworkGateway }}
+  bridgeMappings: {{ .BridgeMappings }}

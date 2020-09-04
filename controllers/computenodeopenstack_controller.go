@@ -336,6 +336,10 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	if instance.Spec.Dedicated {
 		data.Data["Dedicated"] = instance.Spec.Dedicated
 	}
+	data.Data["NetworkGateway"] = false
+	if instance.Spec.NetworkGateway {
+		data.Data["NetworkGateway"] = instance.Spec.NetworkGateway
+	}
 
 	data.Data["Isolcpus"] = false
 	data.Data["SshdPort"] = 2022
@@ -363,6 +367,10 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	data.Data["Nic"] = "enp2s0"
 	if instance.Spec.Network.Nic != "" {
 		data.Data["Nic"] = instance.Spec.Network.Nic
+	}
+	data.Data["BridgeMappings"] = "datacentre:br-ex"
+	if instance.Spec.Network.BridgeMappings != "" {
+		data.Data["BridgeMappings"] = instance.Spec.Network.BridgeMappings
 	}
 
 	// disable selinux if set

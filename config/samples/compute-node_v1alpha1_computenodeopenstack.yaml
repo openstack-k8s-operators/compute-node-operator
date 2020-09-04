@@ -11,6 +11,7 @@ spec:
   workers: 0
   dedicated: false
   selinuxDisabled: true
+  networkGateway: true
   compute:
     novaComputeCPUDedicatedSet: "4-7"
     novaComputeCPUSharedSet: "0-3"
@@ -19,7 +20,7 @@ spec:
     ospSecrets: osp-secrets
   network:
     nic: "enp2s0"
-    bridgeMappings: ""
+    bridgeMappings: "datacentre:br-ex"
     mechanismDrivers: ""
     servicePlugins: ""
     sriov:
