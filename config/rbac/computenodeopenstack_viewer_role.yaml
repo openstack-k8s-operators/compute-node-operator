@@ -1,0 +1,20 @@
+# permissions for end users to view computenodeopenstacks.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: computenodeopenstack-viewer-role
+rules:
+- apiGroups:
+  - compute-node.openstack.org
+  resources:
+  - computenodeopenstacks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - compute-node.openstack.org
+  resources:
+  - computenodeopenstacks/status
+  verbs:
+  - get

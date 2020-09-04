@@ -1,0 +1,11 @@
+domain: openstack.org
+layout: go.kubebuilder.io/v2
+projectName: compute-node-operator
+repo: github.com/openstack-k8s-operators/compute-node-operator
+resources:
+- group: compute-node
+  kind: ComputeNodeOpenStack
+  version: v1alpha1
+version: 3-alpha
+plugins:
+  go.sdk.operatorframework.io/v2-alpha: {}

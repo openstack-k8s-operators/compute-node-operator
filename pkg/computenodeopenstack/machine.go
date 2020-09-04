@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/pkg/apis/computenode/v1alpha1"
+	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,6 +54,7 @@ func GetMachineFromNodeName(c client.Client, node *corev1.Node) (*machinev1beta1
 
 // GetNodeWithName - Returns node object for name
 func GetNodeWithName(kclient kubernetes.Interface, nodeName string) (*corev1.Node, error) {
+
 	node, err := kclient.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err

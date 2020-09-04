@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
-	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/pkg/apis/computenode/v1alpha1"
+	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
