@@ -1,8 +1,8 @@
 package computenodeopenstack
 
 import (
-        util "github.com/openstack-k8s-operators/lib-common/pkg/util"
-	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/pkg/apis/computenode/v1alpha1"
+	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/api/v1alpha1"
+	util "github.com/openstack-k8s-operators/lib-common/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
