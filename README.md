@@ -4,48 +4,28 @@ Compute-Node Operator
 
 ## Pre Req:
 - OCP 4 installed
+- operator-sdk 1.x
 
-#### Clone it
+## Clone it
 
     git clone https://github.com/openstack-k8s-operators/compute-node-operator.git
     cd compute-node-operator
 
-#### Create the operator
+## Create the operator
 
 This is optional, a prebuild operator from quay.io/ltomasbo/compute-operator could be used, e.g. quay.io/ltomasbo/compute-node-operator:v0.0.1 .
 
 Build the image, using your custom registry you have write access to
 
-    make # creates a custom csv-generator tool
-    operator-sdk build --image-builder buildah <image e.g quay.io/ltomasbo/compute-node-operator:v0.0.X>
+    WATCH_NAMESPACE="openstack,openshift-machine-api" make docker-build IMG=<image e.g quay.io/ltomasbo/compute-node-operator:v0.0.X>
 
-Replace `image:` in deploy/operator.yaml with your custom registry
+Push image to your registry:
 
-    sed -i 's|REPLACE_IMAGE|quay.io/ltomasbo/compute-node-operator:v0.0.X|g' deploy/operator.yaml
     podman push --authfile ~/ltomasbo-auth.json quay.io/ltomasbo/compute-node-operator:v0.0.X
 
-#### Install the operator
+## Pre Req to run the operator
 
-Create CRDs
-    
-    oc create -f deploy/crds/compute-node.openstack.org_computenodeopenstacks_crd.yaml
-
-Create role, role_binding and service_account
-
-    oc create -f deploy/role.yaml
-    oc create -f deploy/role_binding.yaml
-    oc create -f deploy/service_account.yaml
-
-Install the operator
-
-    oc create -f deploy/operator.yaml
-
-If necessary check logs with
-
-    POD=`oc get pods -l name=compute-node-operator --field-selector=status.phase=Running -o name | head -1 -`; echo $POD
-    oc logs $POD -f
-
-Create the ConfigMap and Secret required for the OpenStack client to be able to connect to the OpenStack API.
+Requirement are the ConfigMap and Secret for the OpenStack client to be able to connect to the OpenStack API.
 This is required for the pre/post scripts during scale down operation. In the end this should be created by a
 control-plane operator.
 
@@ -88,7 +68,22 @@ Create both, ConfigMap and Secret using:
 
     oc apply -f openstackclient-cm.yaml -f openstackclient-admin-secret.yaml
 
-Create custom resource for a compute node which specifies the needed information (e.g.: `deploy/crds/compute-node.openstack.org_v1alpha1_computenodeopenstack_cr.yaml`):
+## Run the operator local for dev
+
+    WATCH_NAMESPACE="openstack,openshift-machine-api" make run
+
+## Install the operator to an OCP env
+
+The operator is intended to be deployed via OLM [Operator Lifecycle Manager](https://github.com/operator-framework/operator-lifecycle-manager)
+
+If necessary check logs with
+
+    POD=`oc get pods -l name=compute-node-operator --field-selector=status.phase=Running -o name | head -1 -`; echo $POD
+    oc logs $POD -f
+
+## Create a compute node CR
+
+Create custom resource for a compute node which specifies the needed information (e.g.: `config/samples/compute-node_v1alpha1_computenodeopenstack.yaml`):
 
     apiVersion: compute-node.openstack.org/v1alpha1
     kind: ComputeNodeOpenStack
@@ -100,26 +95,43 @@ Create custom resource for a compute node which specifies the needed information
       roleName: worker-osp
       clusterName: ostest
       baseWorkerMachineSetName: ostest-worker-0
-      workers: 1
+      workers: 0
+      dedicated: false
       selinuxDisabled: true
-      corePinning: "4-7"   # Optional
-      infraDaemonSets:     # Optional
-      - name: multus
-        namespace: openshift-multus
-      - name: node-exporter
-        namespace: openshift-monitoring
-      - name: machine-config-daemon
-        namespace: openshift-machine-config-operator
+      compute:
+        novaComputeCPUDedicatedSet: "4-7"
+        novaComputeCPUSharedSet: "0-3"
+        sshdPort: 2022
+        commonConfigMap: common-config
+        ospSecrets: osp-secrets
+      network:
+        nic: "enp2s0"
+        bridgeMappings: ""
+        mechanismDrivers: ""
+        servicePlugins: ""
+        sriov:
+          devName: "test"
+    # needed if openshift-sdn is not running
+    #  infraDaemonSets:
+    #  - name: multus
+    #    namespace: openshift-multus
+    #  - name: node-exporter
+    #    namespace: openshift-monitoring
+    #  - name: machine-config-daemon
+    #    namespace: openshift-machine-config-operator
       drain:
         # image which provides the openstackclient and has the osc-placement plugin installed
         drainPodImage: quay.io/openstack-k8s-operators/tripleo-deploy
         # enable automatic live migration of instances in ACTIVE state
         # all other instances in different state need to be cleaned up manually
-        enabled: true/false # Optional, default is false
+        enabled: false
+      openStackClientAdminSecret: openstackclient-admin
+      openStackClientConfigMap: openstackclient
+      serviceAccount: compute-node
 
 Apply the CR:
 
-    oc apply -f deploy/crds/compute-node.openstack.org_v1alpha1_computenodeopenstack_cr.yaml
+    oc apply -f config/samples/compute-node_v1alpha1_computenodeopenstack.yaml
     
     oc get pods -n openstack
     NAME                                   READY   STATUS    RESTARTS   AGE
@@ -178,11 +190,4 @@ Save and exit.
 
 ## Cleanup
 
-First delete all instances running on the OCP:
-
-    oc delete -f deploy/crds/compute-node.openstack.org_v1alpha1_computenodeopenstack_cr.yaml
-    oc delete -f deploy/operator.yaml
-    oc delete -f deploy/role.yaml
-    oc delete -f deploy/role_binding.yaml
-    oc delete -f deploy/service_account.yaml
-    oc delete -f deploy/crds/compute-node.openstack.org_computenodeopenstacks_crd.yaml
+First delete all instances running on the OCP, then delete the operator using OLM.
