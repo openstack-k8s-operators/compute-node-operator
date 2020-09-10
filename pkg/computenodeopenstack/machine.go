@@ -55,7 +55,7 @@ func GetMachineFromNodeName(c client.Client, node *corev1.Node) (*machinev1beta1
 // GetNodeWithName - Returns node object for name
 func GetNodeWithName(kclient kubernetes.Interface, nodeName string) (*corev1.Node, error) {
 
-	node, err := kclient.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
+	node, err := kclient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}

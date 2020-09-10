@@ -16,7 +16,7 @@ require (
 	github.com/onsi/gomega v1.10.1
 	github.com/openshift/cluster-api v0.0.0-20191129101638-b09907ac6668
 	github.com/openshift/machine-config-operator v4.2.0-alpha.0.0.20190917115525-033375cbe820+incompatible
-	github.com/openstack-k8s-operators/lib-common v0.0.0-20200511145352-a17ab43c6b58
+	github.com/openstack-k8s-operators/lib-common v0.0.0-20200910130010-129482aabaf9
 	github.com/operator-framework/operator-lifecycle-manager v0.0.0-20200321030439-57b580e57e88
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.5.1 // indirect
@@ -28,13 +28,8 @@ require (
 	golang.org/x/tools v0.0.0-20200327195553-82bb89366a1e // indirect
 	k8s.io/api v0.18.6
 	k8s.io/apimachinery v0.18.6
-	k8s.io/client-go v12.0.0+incompatible
+	k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
 	sigs.k8s.io/controller-runtime v0.6.2
 )
 
-replace (
-	k8s.io/api => k8s.io/api v0.17.8
-	k8s.io/apimachinery => k8s.io/apimachinery v0.17.8
-	k8s.io/client-go => k8s.io/client-go v0.17.4
-	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.5.10
-)
+replace k8s.io/client-go => k8s.io/client-go v0.18.6
