@@ -125,22 +125,6 @@ spec:
               required:
               - nic
               type: object
-            nodesToDelete:
-              description: Nodes to delete upon scale down
-              items:
-                description: NodeToDelete defines the name of the node to delete and
-                  if automatic drain is needed
-                properties:
-                  drain:
-                    description: Automatic draining of the node
-                    type: boolean
-                  name:
-                    description: Node Name
-                    type: string
-                required:
-                - name
-                type: object
-              type: array
             openStackClientAdminSecret:
               description: user secrets used to connect to OpenStack API via openstackclient
               type: string
@@ -203,22 +187,6 @@ spec:
                 required:
                 - name
                 - status
-                type: object
-              type: array
-            nodesToDelete:
-              description: Nodes to delete upon scale down
-              items:
-                description: NodeToDelete defines the name of the node to delete and
-                  if automatic drain is needed
-                properties:
-                  drain:
-                    description: Automatic draining of the node
-                    type: boolean
-                  name:
-                    description: Node Name
-                    type: string
-                required:
-                - name
                 type: object
               type: array
             readyWorkers:

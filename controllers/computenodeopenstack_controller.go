@@ -190,12 +190,6 @@ func (r *ComputeNodeOpenStackReconciler) Reconcile(req ctrl.Request) (ctrl.Resul
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-	} else if !reflect.DeepEqual(instance.Spec.NodesToDelete, instance.Status.NodesToDelete) || instance.Spec.Workers < instance.Status.Workers {
-		// Check if nodes to delete information has changed
-		err := updateMachineDeletionSelection(r.Client, instance)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
 	}
 
 	// Need to reapply the spec
@@ -273,7 +267,6 @@ func (r *ComputeNodeOpenStackReconciler) Reconcile(req ctrl.Request) (ctrl.Resul
 	// Update Status
 	instance.Status.Workers = instance.Spec.Workers
 	instance.Status.InfraDaemonSets = instance.Spec.InfraDaemonSets
-	instance.Status.NodesToDelete = instance.Spec.NodesToDelete
 	instance.Status.SpecMDS = specMDS
 	err = r.Client.Status().Update(context.TODO(), instance)
 	if err != nil {
@@ -571,7 +564,7 @@ func (r *ComputeNodeOpenStackReconciler) updateNodesStatus(instance *computenode
 			/* Steps to delete the drain the node
 			   1. Predraining: disable nova service, (optional) migrate VMs, wait until there is no VMs
 			   2. Postdraining: taint the node, remove nova-compute from nova services and placement
-			   3. Remove cleanup jobs, blocker pod finalizer, and update nodesToDelete status information
+			   3. Remove cleanup jobs, blocker pod finalizer
 			*/
 			// 1. NodePreDrain
 			nodePreDrained, err := ensureNodePreDrain(r.Client, node.Name, instance, openstackClientAdmin, openstackClient)
@@ -629,22 +622,6 @@ func (r *ComputeNodeOpenStackReconciler) updateNodesStatus(instance *computenode
 			if err != nil {
 				return err
 			}
-
-			log.Info(fmt.Sprintf("Updating nodeToDelete status"))
-			for i, nodeToDelete := range instance.Spec.NodesToDelete {
-				if nodeToDelete.Name == node.Name {
-					if len(instance.Spec.NodesToDelete) == 1 {
-						instance.Spec.NodesToDelete = []computenodev1alpha1.NodeToDelete{}
-					} else {
-						instance.Spec.NodesToDelete = removeNode(instance.Spec.NodesToDelete, i)
-					}
-					err = r.Client.Update(context.TODO(), instance)
-					if err != nil {
-						return err
-					}
-					break
-				}
-			}
 		}
 	}
 
@@ -657,11 +634,6 @@ func (r *ComputeNodeOpenStackReconciler) updateNodesStatus(instance *computenode
 		}
 	}
 	return nil
-}
-
-func removeNode(nodes []computenodev1alpha1.NodeToDelete, i int) []computenodev1alpha1.NodeToDelete {
-	nodes[i] = nodes[len(nodes)-1]
-	return nodes[:len(nodes)-1]
 }
 
 func getNodeStatus(c client.Client, node *corev1.Node) string {
@@ -851,15 +823,6 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 		enableLiveMigration = fmt.Sprintf("%v", instance.Spec.Drain.Enabled)
 
 	}
-
-	for _, nodeToDelete := range instance.Spec.NodesToDelete {
-		if nodeToDelete.Name == nodeName {
-			if nodeToDelete.Drain {
-				enableLiveMigration = fmt.Sprintf("%v", nodeToDelete.Drain)
-			}
-			break
-		}
-	}
 	envVars = append(envVars, corev1.EnvVar{Name: "LIVE_MIGRATION_ENABLED", Value: enableLiveMigration})
 
 	volumes := []corev1.Volume{
@@ -969,55 +932,6 @@ func isNodeDrained(c client.Client, nodeName string, jobName string, instance *c
 	}
 
 	return false, fmt.Errorf("nodeDrain job type %v, reason: %v", conditionsType, conditionsReason)
-}
-
-func updateMachineDeletionSelection(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
-	// We need to delete the old cluster-api-delete-machine labels and add the new ones
-	nodesToDeleteInfo := make(map[string]string)
-	for _, newNode := range instance.Spec.NodesToDelete {
-		nodesToDeleteInfo[newNode.Name] = "Add"
-	}
-	for _, oldNode := range instance.Status.NodesToDelete {
-		_, exists := nodesToDeleteInfo[oldNode.Name]
-		if exists {
-			delete(nodesToDeleteInfo, oldNode.Name)
-		} else {
-			nodesToDeleteInfo[oldNode.Name] = "Remove"
-		}
-	}
-	machineList := &machinev1beta1.MachineList{}
-	listOpts := []client.ListOption{
-		client.InNamespace("openshift-machine-api"),
-		client.MatchingLabels{"machine.openshift.io/cluster-api-machine-role": instance.Spec.RoleName},
-	}
-	err := c.List(context.TODO(), machineList, listOpts...)
-	if err != nil {
-		return err
-	}
-	annotations := map[string]string{}
-	for _, machine := range machineList.Items {
-		if machine.Status.NodeRef == nil {
-			continue
-		}
-
-		machineNode := machine.Status.NodeRef.Name
-		action, exists := nodesToDeleteInfo[machineNode]
-		if !exists {
-			continue
-		}
-
-		if action == "Add" {
-			annotations["machine.openshift.io/cluster-api-delete-machine"] = "1"
-			machine.SetAnnotations(annotations)
-		} else if action == "Remove" {
-			annotations["machine.openshift.io/cluster-api-delete-machine"] = "0"
-			machine.SetAnnotations(annotations)
-		}
-		if err := c.Update(context.TODO(), &machine); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func ensureMachineSetSync(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
@@ -1202,7 +1116,7 @@ func deleteAllBlockerPodFinalizer(r *ComputeNodeOpenStackReconciler, instance *c
 	/* Steps to delete the drain the node
 	1. Predraining: disable nova service, (optional) migrate VMs, wait until there is no VMs
 	2. Postdraining: taint the node, remove nova-compute from nova services and placement
-	3. Remove cleanup jobs, blocker pod finalizer, and update nodesToDelete status information
+	3. Remove cleanup jobs, blocker pod finalizer
 	*/
 	// 1. NodePreDrain
 	allNodesPreDrained := true
