@@ -264,7 +264,7 @@ func (r *ComputeNodeOpenStackReconciler) Reconcile(req ctrl.Request) (ctrl.Resul
 	   // create machine-config-daemon daemonset(to allow reconfigurations)
 	   // create multus daemonset (to set the node to ready)
 	*/
-	if err := ensureInfraDaemonsets(context.TODO(), r.Kclient, instance); err != nil {
+	if err := ensureInfraDaemonsets(r.Kclient, instance); err != nil {
 		r.Log.Error(err, "Failed to create the infra daemon sets")
 		return ctrl.Result{}, err
 	}
@@ -399,11 +399,11 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	return data, nil
 }
 
-func ensureInfraDaemonsets(ctx context.Context, client kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+func ensureInfraDaemonsets(client kubernetes.Interface, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
 	// Create/Update the required ones
 	for _, dsInfo := range instance.Spec.InfraDaemonSets {
 		originDaemonSet := &appsv1.DaemonSet{}
-		originDaemonSet, err := client.AppsV1().DaemonSets(dsInfo.Namespace).Get(dsInfo.Name, metav1.GetOptions{})
+		originDaemonSet, err := client.AppsV1().DaemonSets(dsInfo.Namespace).Get(context.TODO(), dsInfo.Name, metav1.GetOptions{})
 		if err != nil && errors.IsNotFound(err) {
 			log.Error(err, "Failed to find the daemon set", dsInfo.Name, dsInfo.Namespace)
 			return err
@@ -412,11 +412,11 @@ func ensureInfraDaemonsets(ctx context.Context, client kubernetes.Interface, ins
 		} else {
 			ospDaemonSet := &appsv1.DaemonSet{}
 			ospDaemonSetName := dsInfo.Name + "-" + instance.Spec.RoleName
-			ospDaemonSet, err = client.AppsV1().DaemonSets(dsInfo.Namespace).Get(ospDaemonSetName, metav1.GetOptions{})
+			ospDaemonSet, err = client.AppsV1().DaemonSets(dsInfo.Namespace).Get(context.TODO(), ospDaemonSetName, metav1.GetOptions{})
 			if err != nil && errors.IsNotFound(err) {
 				// Creating a new Daemonset ospDaemonSetName
 				ds := newDaemonSet(instance, originDaemonSet, ospDaemonSetName, dsInfo.Namespace)
-				_, err := client.AppsV1().DaemonSets(dsInfo.Namespace).Create(ds)
+				_, err := client.AppsV1().DaemonSets(dsInfo.Namespace).Create(context.TODO(), ds, metav1.CreateOptions{})
 				if err != nil {
 					log.Error(err, "Error creating Daemonset", ospDaemonSetName)
 					return err
@@ -429,7 +429,7 @@ func ensureInfraDaemonsets(ctx context.Context, client kubernetes.Interface, ins
 				ds := newDaemonSet(instance, originDaemonSet, ospDaemonSetName, dsInfo.Namespace)
 				// Merge the desired object with what actually exists
 				if !reflect.DeepEqual(ospDaemonSet.Spec, ds.Spec) {
-					_, err := client.AppsV1().DaemonSets(dsInfo.Namespace).Update(ds)
+					_, err := client.AppsV1().DaemonSets(dsInfo.Namespace).Update(context.TODO(), ds, metav1.UpdateOptions{})
 					if err != nil {
 						log.Error(err, "could not update object", ospDaemonSetName)
 						return err
@@ -449,7 +449,7 @@ func ensureInfraDaemonsets(ctx context.Context, client kubernetes.Interface, ins
 		}
 		if !existing {
 			ospDaemonSetName := statusDsInfo.Name + "-" + instance.Spec.RoleName
-			err := client.AppsV1().DaemonSets(statusDsInfo.Namespace).Delete(ospDaemonSetName, &metav1.DeleteOptions{})
+			err := client.AppsV1().DaemonSets(statusDsInfo.Namespace).Delete(context.TODO(), ospDaemonSetName, metav1.DeleteOptions{})
 			if err != nil && errors.IsNotFound(err) {
 				// Already deleted
 				continue
@@ -503,7 +503,7 @@ func (r *ComputeNodeOpenStackReconciler) updateNodesStatus(instance *computenode
 	// With the operator watching multiple namespaces provided as a list the c client
 	// returns each entry multiple times. The kclient returns only a single entry.
 	workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
-	nodeList, err := r.Kclient.CoreV1().Nodes().List(metav1.ListOptions{LabelSelector: workerLabel})
+	nodeList, err := r.Kclient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{LabelSelector: workerLabel})
 	if err != nil {
 		return err
 	}
@@ -1063,7 +1063,7 @@ func addToBeRemovedTaint(kclient kubernetes.Interface, node corev1.Node) error {
 		Effect: taintEffectNoExecute,
 	})
 
-	updatedNode, err := kclient.CoreV1().Nodes().Update(&node)
+	updatedNode, err := kclient.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
 	if err != nil || updatedNode == nil {
 		return fmt.Errorf("failed to update node %v after adding taint: %v", node.Name, err)
 	}
@@ -1081,7 +1081,7 @@ func deleteJobWithName(c client.Client, kclient kubernetes.Interface, instance *
 
 	if job.Status.Succeeded == 1 {
 		background := metav1.DeletePropagationBackground
-		err = kclient.BatchV1().Jobs(instance.Namespace).Delete(jobName, &metav1.DeleteOptions{PropagationPolicy: &background})
+		err = kclient.BatchV1().Jobs(instance.Namespace).Delete(context.TODO(), jobName, metav1.DeleteOptions{PropagationPolicy: &background})
 		if err != nil {
 			return fmt.Errorf("failed to delete drain job: %s, %v", job.Name, err)
 		}
@@ -1183,7 +1183,7 @@ func getDeletedOspWorkerNodes(c client.Client, instance *computenodev1alpha1.Com
 func deleteAllBlockerPodFinalizer(r *ComputeNodeOpenStackReconciler, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
 	// get all nodes for the current role
 	workerLabel := "node-role.kubernetes.io/" + instance.Spec.RoleName
-	nodeList, err := r.Kclient.CoreV1().Nodes().List(metav1.ListOptions{LabelSelector: workerLabel})
+	nodeList, err := r.Kclient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{LabelSelector: workerLabel})
 	if err != nil {
 		return err
 	}
@@ -1342,7 +1342,7 @@ func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *c
 	infraDaemonSets := instance.Status.InfraDaemonSets
 	infraDaemonSets = append(infraDaemonSets, instance.Spec.InfraDaemonSets...)
 	for _, statusDsInfo := range infraDaemonSets {
-		err := r.Kclient.AppsV1().DaemonSets(statusDsInfo.Namespace).DeleteCollection(&metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelectorString})
+		err := r.Kclient.AppsV1().DaemonSets(statusDsInfo.Namespace).DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelectorString})
 		if err != nil && errors.IsNotFound(err) {
 			// Already deleted
 			continue
@@ -1368,7 +1368,7 @@ func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *c
 	}
 
 	// delete user-data secret in openshift-machine-api namespace
-	err = r.Kclient.CoreV1().Secrets("openshift-machine-api").DeleteCollection(&metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelectorString})
+	err = r.Kclient.CoreV1().Secrets("openshift-machine-api").DeleteCollection(context.TODO(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: labelSelectorString})
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
