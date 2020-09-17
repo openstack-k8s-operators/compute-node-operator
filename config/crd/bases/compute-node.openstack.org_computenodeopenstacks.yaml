@@ -125,6 +125,9 @@ spec:
               required:
               - nic
               type: object
+            networkGateway:
+              description: Make the nodes to be Network Gateways
+              type: boolean
             nodesToDelete:
               description: Nodes to delete upon scale down
               items:
