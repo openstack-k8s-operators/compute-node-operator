@@ -93,7 +93,7 @@ rules:
   - watch
 - apiGroups:
   - machineconfiguration.openshift.io
-  - nmachine.openshift.io
+  - machine.openshift.io
   resources:
   - '*'
   verbs:
