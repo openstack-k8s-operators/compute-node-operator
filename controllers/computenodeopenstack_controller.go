@@ -87,7 +87,7 @@ type ComputeNodeOpenStackReconciler struct {
 // +kubebuilder:rbac:groups=compute-node.openstack.org,resources=deployments/finalizers,verbs=update
 // +kubebuilder:rbac:groups=neutron.openstack.org,resources=ovncontrollers;ovsnodeosps,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=nova.openstack.org,resources=novacomputes;virtlogds;libvirtds;iscsids;novamigrationtargets,verbs=create;delete;get;list;patch;update;watch
-// +kubebuilder:rbac:groups=nmachine.openshift.io;machineconfiguration.openshift.io,resources="*",verbs="*"
+// +kubebuilder:rbac:groups=machine.openshift.io;machineconfiguration.openshift.io,resources="*",verbs="*"
 // +kubebuilder:rbac:groups=core,namespace=openstack,resources=pods,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=security.openshift.io,namespace=openstack,resources=securitycontextconstraints,resourceNames=hostnetwork,verbs=use
 
