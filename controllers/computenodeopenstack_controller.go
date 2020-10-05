@@ -341,19 +341,51 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 		data.Data["NetworkGateway"] = instance.Spec.NetworkGateway
 	}
 
+	data.Data["EnableHugePages"] = false
+	data.Data["HugePagesDefaultSize"] = ""
+	data.Data["HugePagesPages"] = []map[string]string{}
+	if instance.Spec.Performance.HugePages.DefaultHugePagesSize != "" {
+		data.Data["EnableHugePages"] = true
+		data.Data["HugePagesDefaultSize"] = instance.Spec.Performance.HugePages.DefaultHugePagesSize
+		if len(instance.Spec.Performance.HugePages.Pages) != 0 {
+			data.Data["HugePagesPages"] = instance.Spec.Performance.HugePages.Pages
+		}
+	}
+
 	data.Data["Isolcpus"] = false
+	data.Data["CPUIsolated"] = ""
+	data.Data["CPUReserved"] = ""
+	if instance.Spec.Performance.CPU.Isolated != "" {
+		data.Data["Isolcpus"] = true
+		data.Data["CPUIsolated"] = instance.Spec.Performance.CPU.Isolated
+		data.Data["CPUReserved"] = instance.Spec.Performance.CPU.Reserved
+	}
+
 	data.Data["SshdPort"] = 2022
 	data.Data["NovaComputeCPUDedicatedSet"] = ""
 	data.Data["NovaComputeCPUSharedSet"] = ""
+	data.Data["NovaReservedHostMemory"] = 0
 	data.Data["CommonConfigMap"] = "common-config"
 	data.Data["OspSecrets"] = "osp-secrets"
 	if instance.Spec.Compute.NovaComputeCPUDedicatedSet != "" {
-		data.Data["Isolcpus"] = true
+		if data.Data["Isolcpus"] == false {
+			return data, fmt.Errorf("NovaComputeCPUDedicated cannot be set without CPU isolation")
+		}
 		data.Data["NovaComputeCPUDedicatedSet"] = instance.Spec.Compute.NovaComputeCPUDedicatedSet
+		log.Info(fmt.Sprintf("NovaComputeCPUDedicatedSet must be a subet of CPU Isolated"))
+
 	}
 	if instance.Spec.Compute.NovaComputeCPUSharedSet != "" {
+		if data.Data["Isolcpus"] == false {
+			return data, fmt.Errorf("NovaComputeCPUSharedSet cannot be set without CPU reserved")
+		}
 		data.Data["NovaComputeCPUSharedSet"] = instance.Spec.Compute.NovaComputeCPUSharedSet
+		log.Info(fmt.Sprintf("NovaCompuNovaComputeCPUSharedSet must be a subet of CPU Reserved"))
 	}
+	if instance.Spec.Compute.NovaReservedHostMemory != 0 {
+		data.Data["NovaReservedHostMemory"] = instance.Spec.Compute.NovaReservedHostMemory
+	}
+
 	if instance.Spec.Compute.SshdPort != 0 {
 		data.Data["SshdPort"] = instance.Spec.Compute.SshdPort
 	}
@@ -1410,6 +1442,21 @@ func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *c
 			return err
 		}
 		log.Info(fmt.Sprintf("MachineConfig deleted: name %s - %s", mc.Name, mc.UID))
+	}
+
+	// delete performanceprofiles in instance namespace
+	performanceProfiles, err := computenodeopenstack.GetPerformanceProfilesWithLabel(r.Client, instance, labelSelectorMap)
+	if err != nil {
+		return err
+	}
+	for idx := range performanceProfiles.Items {
+		snnp := &performanceProfiles.Items[idx]
+
+		err = r.Client.Delete(context.Background(), snnp, &client.DeleteOptions{})
+		if err != nil {
+			return err
+		}
+		log.Info(fmt.Sprintf("PerformancePorifle deleted: name %s - %s", snnp.Name, snnp.UID))
 	}
 
 	return nil

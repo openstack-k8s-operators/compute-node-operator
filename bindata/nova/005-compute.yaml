@@ -6,8 +6,15 @@ metadata:
 spec:
   commonConfigMap: {{ .CommonConfigMap }}
   ospSecrets: {{ .OspSecrets }}
+  {{ if not (eq .NovaComputeCPUDedicatedSet "") }}
   novaComputeCpuDedicatedSet: {{ .NovaComputeCPUDedicatedSet }}
+  {{ end }}
+  {{ if not (eq .NovaComputeCPUSharedSet "") }}
   novaComputeCpuSharedSet: {{ .NovaComputeCPUSharedSet }}
+  {{ end }}
+  {{ if not (eq .NovaReservedHostMemory 0) }}
+  novaReservedHostMemory: {{ .NovaReservedHostMemory }}
+  {{ end }}
   novaComputeImage: docker.io/tripleotrain/rhel-binary-nova-compute:current-tripleo
   roleName: {{ .WorkerOspRole }}
   serviceAccount: nova

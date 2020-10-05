@@ -55,6 +55,10 @@ spec:
                 novaComputeCPUSharedSet:
                   description: CPU Shared Set
                   type: string
+                novaReservedHostMemory:
+                  description: Memory reserved for the host
+                  format: int32
+                  type: integer
                 ospSecrets:
                   description: Nova secret containing the needed passwords
                   type: string
@@ -63,9 +67,6 @@ spec:
                   format: int32
                   type: integer
               type: object
-            corePinning:
-              description: Cores Pinning
-              type: string
             dedicated:
               description: Make or not the Node dedicated to OSP workloads (does not
                 account for infra pods)
@@ -151,6 +152,35 @@ spec:
               description: openstackclient configmap which holds information to connect
                 to OpenStack API
               type: string
+            performance:
+              description: Performance configuration
+              properties:
+                cpu:
+                  description: CPUConfig defines the cpu isolation parameters
+                  properties:
+                    isolated:
+                      type: string
+                    reserved:
+                      type: string
+                  required:
+                  - isolated
+                  - reserved
+                  type: object
+                hugepages:
+                  description: HugepagesConfig defines the hugepages parameters
+                  properties:
+                    defaultHugePagesSize:
+                      type: string
+                    pages:
+                      items:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      type: array
+                  required:
+                  - defaultHugePagesSize
+                  type: object
+              type: object
             roleName:
               description: Name of the worker role created for OSP computes
               type: string

@@ -15,9 +15,19 @@ spec:
   compute:
     novaComputeCPUDedicatedSet: "4-7"
     novaComputeCPUSharedSet: "0-3"
+    novaReservedHostMemory: 4096
     sshdPort: 2022
     commonConfigMap: common-config
     ospSecrets: osp-secrets
+  performance:
+    hugepages:
+      defaultHugepagesSize: "1G"
+      pages:
+      - size: "1G"
+        count: "16"
+    cpu:
+      isolated: "4-7"
+      reserved: "0-3"
   network:
     nic: "enp2s0"
     bridgeMappings: "datacentre:br-ex"
