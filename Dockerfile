@@ -34,8 +34,8 @@ FROM ${OPERATOR_BASE_IMAGE}
 ARG DEST_ROOT=/dest-root
 
 LABEL   com.redhat.component="compute-node-operator-container" \
-        name="compute-node-operator" \
-        version="1.0" \
+        name="cn-osp/compute-node-operator" \
+        version="0.0.1" \
         summary="Compute Node Operator" \
         io.k8s.name="compute-node-operator" \
         io.k8s.description="This image includes the compute-node-operator"
