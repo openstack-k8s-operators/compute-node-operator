@@ -92,8 +92,8 @@ rules:
   - update
   - watch
 - apiGroups:
-  - machineconfiguration.openshift.io
   - machine.openshift.io
+  - machineconfiguration.openshift.io
   resources:
   - '*'
   verbs:

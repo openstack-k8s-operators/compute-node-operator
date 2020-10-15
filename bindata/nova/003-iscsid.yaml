@@ -6,4 +6,3 @@ metadata:
 spec:
   iscsidImage: docker.io/tripleotrain/rhel-binary-iscsid:current-tripleo
   roleName: {{ .WorkerOspRole }}
-  serviceAccount: nova

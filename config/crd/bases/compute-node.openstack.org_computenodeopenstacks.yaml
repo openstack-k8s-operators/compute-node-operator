@@ -40,14 +40,18 @@ spec:
             baseWorkerMachineSetName:
               description: Base Worker MachineSet Name
               type: string
+            cell:
+              description: Cell the computes are assigned to, default cell1
+              type: string
             clusterName:
               description: Cluster name
               type: string
             compute:
               description: Compute/Nova configuration
               properties:
-                commonConfigMap:
-                  description: Nova configMap containing the common config
+                neutronSecrets:
+                  description: Neutron secret containing the needed password, default
+                    "neutron-secret"
                   type: string
                 novaComputeCPUDedicatedSet:
                   description: CPU Dedicated Set (pinning)
@@ -55,13 +59,22 @@ spec:
                 novaComputeCPUSharedSet:
                   description: CPU Shared Set
                   type: string
-                ospSecrets:
-                  description: Nova secret containing the needed passwords
+                novaSecrets:
+                  description: Nova secret containing the needed password, default
+                    "nova-secret"
+                  type: string
+                placementSecrets:
+                  description: Placement secret containing the needed password, default
+                    "placement-secret"
                   type: string
                 sshdPort:
                   description: sshd migration port
                   format: int32
                   type: integer
+                transportURLSecret:
+                  description: TransportURL secret containing the needed password,
+                    default nova-<CELL>-transport-url
+                  type: string
               type: object
             corePinning:
               description: Cores Pinning

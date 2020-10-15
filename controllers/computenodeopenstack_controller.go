@@ -329,6 +329,12 @@ func (r *ComputeNodeOpenStackReconciler) SetupWithManager(mgr ctrl.Manager) erro
 
 func getRenderData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (bindatautil.RenderData, error) {
 	data := bindatautil.MakeRenderData()
+	// default to cell1 if not specifiec in CR
+	cell := "cell1"
+	if instance.Spec.Cell != "" {
+		cell = instance.Spec.Cell
+	}
+
 	data.Data["ClusterName"] = instance.Spec.ClusterName
 	data.Data["WorkerOspRole"] = instance.Spec.RoleName
 	data.Data["Workers"] = instance.Spec.Workers
@@ -345,7 +351,6 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	data.Data["SshdPort"] = 2022
 	data.Data["NovaComputeCPUDedicatedSet"] = ""
 	data.Data["NovaComputeCPUSharedSet"] = ""
-	data.Data["CommonConfigMap"] = "common-config"
 	data.Data["OspSecrets"] = "osp-secrets"
 	if instance.Spec.Compute.NovaComputeCPUDedicatedSet != "" {
 		data.Data["Isolcpus"] = true
@@ -357,11 +362,25 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	if instance.Spec.Compute.SshdPort != 0 {
 		data.Data["SshdPort"] = instance.Spec.Compute.SshdPort
 	}
-	if instance.Spec.Compute.CommonConfigMap != "" {
-		data.Data["CommonConfigMap"] = instance.Spec.Compute.CommonConfigMap
+	if instance.Spec.Compute.NovaSecret != "" {
+		data.Data["NovaSecret"] = instance.Spec.Compute.NovaSecret
+	} else {
+		data.Data["NovaSecret"] = "nova-secret"
 	}
-	if instance.Spec.Compute.OspSecrets != "" {
-		data.Data["OspSecrets"] = instance.Spec.Compute.OspSecrets
+	if instance.Spec.Compute.NeutronSecret != "" {
+		data.Data["NeutronSecret"] = instance.Spec.Compute.NeutronSecret
+	} else {
+		data.Data["NeutronSecret"] = "neutron-secret"
+	}
+	if instance.Spec.Compute.PlacementSecret != "" {
+		data.Data["PlacementSecret"] = instance.Spec.Compute.PlacementSecret
+	} else {
+		data.Data["PlacementSecret"] = "placement-secret"
+	}
+	if instance.Spec.Compute.TransportURLSecret != "" {
+		data.Data["TransportURLSecret"] = instance.Spec.Compute.TransportURLSecret
+	} else {
+		data.Data["TransportURLSecret"] = fmt.Sprintf("nova-%s-transport-url", cell)
 	}
 
 	data.Data["Nic"] = "enp2s0"
@@ -840,19 +859,6 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 	}
 	envVars = append(envVars, corev1.EnvVar{Name: "DISABLE_COMPUTE_SERVICES", Value: strings.Join(deletedTaggedNodes, " ")})
 
-	// Env vars to connect to openstack endpoints
-	// mschuppert - note:   the format of the secret/configmap might change when the OSP controller
-	//                      operators who in the end should populate this information are done. So
-	//                      likely changes are expected.
-	// From ConfigMap
-	for env, v := range openstackClient.Data {
-		envVars = append(envVars, corev1.EnvVar{Name: env, Value: v})
-	}
-	// From Secret
-	for env, v := range openstackClientAdmin.Data {
-		envVars = append(envVars, corev1.EnvVar{Name: env, Value: string(v)})
-	}
-
 	// Example to handle drain information
 	enableLiveMigration := "false"
 	if instance.Spec.Drain.Enabled {
@@ -869,6 +875,7 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 		}
 	}
 	envVars = append(envVars, corev1.EnvVar{Name: "LIVE_MIGRATION_ENABLED", Value: enableLiveMigration})
+	envVars = append(envVars, corev1.EnvVar{Name: "OS_CLOUD", Value: "default"})
 
 	volumes := []corev1.Volume{
 		{
@@ -882,6 +889,24 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 				},
 			},
 		},
+		{
+			Name: "openstack-config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: openstackClient.Name,
+					},
+				},
+			},
+		},
+		{
+			Name: "openstack-config-secret",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: openstackClientAdmin.Name,
+				},
+			},
+		},
 	}
 
 	volumeMounts := []corev1.VolumeMount{
@@ -889,6 +914,16 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 			Name:      strings.ToLower(instance.Kind) + "-scripts",
 			ReadOnly:  true,
 			MountPath: "/usr/local/bin",
+		},
+		{
+			Name:      "openstack-config",
+			MountPath: "/etc/openstack/clouds.yaml",
+			SubPath:   "clouds.yaml",
+		},
+		{
+			Name:      "openstack-config-secret",
+			MountPath: "/etc/openstack/secure.yaml",
+			SubPath:   "secure.yaml",
 		},
 	}
 
