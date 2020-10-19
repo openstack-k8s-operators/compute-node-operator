@@ -97,7 +97,7 @@ func CreateOperatorEnvVar(repo, deployClusterResources, operatorImage, pullPolic
 	return &[]corev1.EnvVar{
 		{
 			Name:  "WATCH_NAMESPACE",
-			Value: fmt.Sprintf(namespace + ",openshift-machine-api"),
+			Value: fmt.Sprintf(namespace + ",openshift-machine-api,openshift-sriov-network-operator"),
 		},
 		{
 			Name: "POD_NAME",

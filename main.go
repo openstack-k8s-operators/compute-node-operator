@@ -34,6 +34,7 @@ import (
 
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
+	sriovnetworkv1 "github.com/openshift/sriov-network-operator/pkg/apis/sriovnetwork/v1"
 	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/api/v1alpha1"
 	"github.com/openstack-k8s-operators/compute-node-operator/controllers"
 	"github.com/prometheus/common/log"
@@ -51,6 +52,7 @@ func init() {
 	utilruntime.Must(computenodev1alpha1.AddToScheme(scheme))
 	utilruntime.Must(machinev1beta1.AddToScheme(scheme))
 	utilruntime.Must(mcfgv1.AddToScheme(scheme))
+	utilruntime.Must(sriovnetworkv1.AddToScheme(scheme))
 
 	// +kubebuilder:scaffold:scheme
 }

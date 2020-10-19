@@ -1,0 +1,27 @@
+{{ if not (eq .AvailableNodeCount 0) }}
+  {{ $workerOspRole := .WorkerOspRole }}
+  {{ $workerOspRoleFormatted := .WorkerOspRole | replace "-" "_" }}
+  {{ range $i, $e := .Sriov }}
+    {{ if not (eq $i 0) }}
+---
+    {{ end }}
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: sriov-policy-{{ $workerOspRole }}-{{ $e.Interface }}
+  namespace: openshift-sriov-network-operator
+  labels:
+    compute-node.openstack.org/sriov-policy: "{{ $workerOspRole }}"
+spec:
+  deviceType: {{ $e.DeviceType }}
+  mtu: {{ $e.Mtu }}
+  nicSelector:
+    pfNames:
+    - {{ $e.Interface }}
+  nodeSelector:
+    node-role.kubernetes.io/{{ $workerOspRole }}: ""
+  numVfs: {{ $e.NumVfs }}
+  priority: 5
+  resourceName: sriovnic_{{ $workerOspRoleFormatted }}_{{ $e.Interface }}
+  {{ end }}
+{{ end }}

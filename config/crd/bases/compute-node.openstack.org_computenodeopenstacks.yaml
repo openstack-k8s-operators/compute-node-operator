@@ -127,14 +127,28 @@ spec:
                 servicePlugins:
                   type: string
                 sriov:
-                  description: SriovConfig defines SRIOV config parameters, such as
-                    nic information.
-                  properties:
-                    devName:
-                      type: string
-                  required:
-                  - devName
-                  type: object
+                  items:
+                    description: SriovConfig defines SRIOV config parameters, such
+                      as nic information.
+                    properties:
+                      deviceType:
+                        type: string
+                      interface:
+                        type: string
+                      mtu:
+                        format: int32
+                        type: integer
+                      network:
+                        type: string
+                      numVfs:
+                        format: int32
+                        type: integer
+                    required:
+                    - deviceType
+                    - interface
+                    - network
+                    type: object
+                  type: array
               required:
               - nic
               type: object
