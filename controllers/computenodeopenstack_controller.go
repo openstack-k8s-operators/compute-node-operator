@@ -1428,7 +1428,7 @@ func ensureSriovRemovalSync(c client.Client, instance *computenodev1alpha1.Compu
 	}
 
 	// Get all SRIOV policies tied to this instance
-	sriovNetworkNodePolicies, err := computenodeopenstack.GetSriovNetworkNodePoliciesWithLabel(c, instance, labelSelectorMap, "openshift-sriov-network-operator")
+	sriovNetworkNodePolicies, err := computenodeopenstack.GetSriovNetworkNodePoliciesWithLabel(c, instance, labelSelectorMap, instance.Namespace)
 	if err != nil {
 		return err
 	}
@@ -1478,7 +1478,7 @@ func ensureSriovRemovalSync(c client.Client, instance *computenodev1alpha1.Compu
    - user-data secret, openshift-machine-api namespace
    - machineconfigpool, not namespaced
    - machineconfig, not namespaced
-   - sriovnetworknodepolicy, openshift-sriov-network-operator namespace
+   - sriovnetworknodepolicy, namespace information from CR.Spec
 */
 func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
 	labelSelectorMap := map[string]string{
@@ -1554,8 +1554,8 @@ func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *c
 		log.Info(fmt.Sprintf("MachineConfig deleted: name %s - %s", mc.Name, mc.UID))
 	}
 
-	// delete sriovnetworknodepolicies in openshift-sriov-network-operator namespace
-	sriovNetworkNodePolicies, err := computenodeopenstack.GetSriovNetworkNodePoliciesWithLabel(r.Client, instance, labelSelectorMap, "openshift-sriov-network-operator")
+	// delete sriovnetworknodepolicies in instance namespace
+	sriovNetworkNodePolicies, err := computenodeopenstack.GetSriovNetworkNodePoliciesWithLabel(r.Client, instance, labelSelectorMap, instance.Namespace)
 	if err != nil {
 		return err
 	}

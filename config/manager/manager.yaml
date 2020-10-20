@@ -38,7 +38,7 @@ spec:
             memory: 20Mi
         env:
           - name: WATCH_NAMESPACE
-            value: "openstack,openshift-machine-api,openshift-sriov-network-operator"
+            value: "openstack,openshift-machine-api"
           - name: POD_NAME
             valueFrom:
               fieldRef:

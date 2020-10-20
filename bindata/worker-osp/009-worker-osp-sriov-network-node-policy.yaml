@@ -9,7 +9,7 @@ apiVersion: sriovnetwork.openshift.io/v1
 kind: SriovNetworkNodePolicy
 metadata:
   name: sriov-policy-{{ $workerOspRole }}-{{ $e.Interface }}
-  namespace: openshift-sriov-network-operator
+  namespace: openstack
   labels:
     compute-node.openstack.org/sriov-policy: "{{ $workerOspRole }}"
 spec:
