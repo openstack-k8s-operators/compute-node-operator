@@ -9,6 +9,12 @@ spec:
   placementSecret: {{ .PlacementSecret }}
   transportURLSecret: {{ .TransportURLSecret }}
   novaComputeCpuDedicatedSet: {{ .NovaComputeCPUDedicatedSet }}
+  {{ end }}
+  {{ if not (eq .NovaComputeCPUSharedSet "") }}
   novaComputeCpuSharedSet: {{ .NovaComputeCPUSharedSet }}
-  novaComputeImage: docker.io/tripleomaster/centos-binary-nova-compute:current-tripleo
+  {{ end }}
+  {{ if not (eq .NovaReservedHostMemory 0) }}
+  novaReservedHostMemory: {{ .NovaReservedHostMemory }}
+  {{ end }}
+  novaComputeImage: docker.io/tripleotrain/rhel-binary-nova-compute:current-tripleo
   roleName: {{ .WorkerOspRole }}

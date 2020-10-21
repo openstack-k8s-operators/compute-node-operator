@@ -1,0 +1,29 @@
+{{ if or .Isolcpus .EnableHugePages }}
+apiVersion: performance.openshift.io/v1alpha1
+kind: PerformanceProfile
+metadata:
+  name: performance-profile-{{ .WorkerOspRole }}
+spec:
+  {{ if and (not (eq .CPUIsolated "")) (not (eq .CPUReserved ""))}}
+  cpu:
+    isolated: "{{ .CPUIsolated }}"
+    reserved: "{{ .CPUReserved }}"
+  {{ end }}
+  hugepages:
+  {{ if not (eq .HugePagesDefaultSize "") }}
+    defaultHugepagesSize: "{{ .HugePagesDefaultSize }}"
+  {{ end }}
+  {{ if not (eq (len .HugePagesPages) 0) }}
+    pages:
+    {{ range $i, $m := .HugePagesPages }}
+    - size: "{{ $m.size }}"
+      count: {{ $m.count }}
+    {{ end }}
+  {{ else }}
+    pages: []
+  {{ end }}
+  realTimeKernel:
+    enabled: false 
+  nodeSelector:
+    node-role.kubernetes.io/{{ .WorkerOspRole }}: ""
+{{ end }} 

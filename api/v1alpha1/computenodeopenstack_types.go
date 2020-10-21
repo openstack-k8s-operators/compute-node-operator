@@ -30,8 +30,6 @@ type ComputeNodeOpenStackSpec struct {
 	BaseWorkerMachineSetName string `json:"baseWorkerMachineSetName"`
 	// Number of workers
 	Workers int32 `json:"workers,omitempty"`
-	// Cores Pinning
-	CorePinning string `json:"corePinning,omitempty"`
 	// Make or not the Node dedicated to OSP workloads (does not account for infra pods)
 	Dedicated bool `json:"dedicated,omitempty"`
 	// Make the nodes to be Network Gateways
@@ -50,6 +48,8 @@ type ComputeNodeOpenStackSpec struct {
 	Compute NovaCompute `json:"compute,omitempty"`
 	// Network/Neutron configuration
 	Network NeutronNetwork `json:"network,omitempty"`
+	// Performance configuration
+	Performance PerformanceConfig `json:"performance,omitempty"`
 	// Manage selinux - Defaults to false
 	SelinuxDisabled bool `json:"selinuxDisabled,omitempty"`
 	// Cell the computes are assigned to, default cell1
@@ -81,6 +81,8 @@ type NovaCompute struct {
 	NovaComputeCPUDedicatedSet string `json:"novaComputeCPUDedicatedSet,omitempty"`
 	// CPU Shared Set
 	NovaComputeCPUSharedSet string `json:"novaComputeCPUSharedSet,omitempty"`
+	// Memory reserved for the host
+	NovaReservedHostMemory int32 `json:"novaReservedHostMemory,omitempty"`
 	// sshd migration port
 	SshdPort int32 `json:"sshdPort,omitempty"`
 	// Nova secret containing the needed password, default "nova-secret"
@@ -91,6 +93,24 @@ type NovaCompute struct {
 	PlacementSecret string `json:"placementSecrets,omitempty"`
 	// TransportURL secret containing the needed password, default nova-<CELL>-transport-url
 	TransportURLSecret string `json:"transportURLSecret,omitempty"`
+}
+
+// PerformanceConfig defines the OS tuning parameters
+type PerformanceConfig struct {
+	HugePages HugepagesConfig `json:"hugepages,omitempty"`
+	CPU       CPUConfig       `json:"cpu,omitempty"`
+}
+
+// HugepagesConfig defines the hugepages parameters
+type HugepagesConfig struct {
+	DefaultHugePagesSize string              `json:"defaultHugePagesSize"`
+	Pages                []map[string]string `json:"pages,omitempty"`
+}
+
+// CPUConfig defines the cpu isolation parameters
+type CPUConfig struct {
+	Isolated string `json:"isolated"`
+	Reserved string `json:"reserved"`
 }
 
 // NeutronNetwork defines neutron configuration parameters
