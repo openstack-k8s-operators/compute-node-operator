@@ -33,8 +33,13 @@ spec:
     bridgeMappings: "datacentre:br-ex"
     mechanismDrivers: ""
     servicePlugins: ""
-    sriov:
-      devName: "test"
+    sriov: []
+    # Uncomment and customize to allocate VFs on an SRIOV-capable NIC on actual baremetal hardware
+    #- interface: enp7s0
+    #  mtu: 9000
+    #  numVfs: 32
+    #  deviceType: vfio-pci
+    #  network: sriov-phy1
 # needed if openshift-sdn is not running
 #  infraDaemonSets:
 #  - name: multus

@@ -95,6 +95,7 @@ rules:
   - machine.openshift.io
   - machineconfiguration.openshift.io
   - performance.openshift.io
+  - sriovnetwork.openshift.io
   resources:
   - '*'
   verbs:

@@ -32,37 +32,32 @@ control-plane operator.
 Create `openstackclient` ConfigMap file (e.g. `openstackclient-cm.yaml`)
 
     apiVersion: v1
+    data:
+      OS_CLOUD: default
+      clouds.yaml: |
+        clouds:
+          default:
+            auth:
+              auth_url: http://keystone-openstack.apps.ostest.test.metalkube.org
+              project_name: admin
+              username: admin
+              user_domain_name: Default
+              project_domain_name: Default
+            region_name: regionOne
     kind: ConfigMap
     metadata:
-      name: openstackclient
+      name: openstack-config
       namespace: openstack
-    data:
-      NOVA_VERSION: "1.1"
-      COMPUTE_API_VERSION: "1.1"
-      OS_USER_DOMAIN_NAME: "Default"
-      OS_PROJECT_DOMAIN_NAME: "Default"
-      OS_NO_CACHE: "True"
-      OS_CLOUDNAME: "overcloud"
-      PYTHONWARNINGS: "ignore:Certificate has no, ignore:A true SSLContext object is not available"
-      OS_AUTH_TYPE: "password"
-      OS_AUTH_URL: "http://192.168.25.100:5000"
-      OS_IDENTITY_API_VERSION: "3"
-      OS_COMPUTE_API_VERSION: "2.latest"
-      OS_IMAGE_API_VERSION: "2"
-      OS_VOLUME_API_VERSION: "3"
-      OS_REGION_NAME: "regionOne"
 
 Create `openstackclient-admin` Secret which for a user with admin privileges (e.g. `openstackclient-admin-secret.yaml`)
 
     apiVersion: v1
+    data:
+      secure.yaml: Y2xvdWRzOgogIGRlZmF1bHQ6CiAgICBhdXRoOgogICAgICBwYXNzd29yZDogZm9vYmFyMTIzCg==
     kind: Secret
     metadata:
-      name: openstackclient-admin
+      name: openstack-config-secret
       namespace: openstack
-    data:
-      OS_USERNAME: YWRtaW4=
-      OS_PROJECT_NAME: YWRtaW4=
-      OS_PASSWORD: YWRtaW4tcGFzc3dvcmQ=
 
 Create both, ConfigMap and Secret using:
 
@@ -102,8 +97,6 @@ Create custom resource for a compute node which specifies the needed information
         novaComputeCPUDedicatedSet: "4-7"
         novaComputeCPUSharedSet: "0-3"
         sshdPort: 2022
-        commonConfigMap: common-config
-        ospSecrets: osp-secrets
       network:
         nic: "enp2s0"
         bridgeMappings: ""

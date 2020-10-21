@@ -380,6 +380,7 @@ func getOperatorClusterRules() *[]rbacv1.PolicyRule {
 				"machine.openshift.io",
 				"machineconfiguration.openshift.io",
 				"performance.openshift.io",
+				"sriovnetwork.openshift.io",
 			},
 			Resources: []string{
 				"*",

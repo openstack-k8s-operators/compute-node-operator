@@ -4,9 +4,10 @@ metadata:
   name: nova-compute-{{ .WorkerOspRole }}
   namespace: openstack
 spec:
-  commonConfigMap: {{ .CommonConfigMap }}
-  ospSecrets: {{ .OspSecrets }}
-  {{ if not (eq .NovaComputeCPUDedicatedSet "") }}
+  novaSecret: {{ .NovaSecret }}
+  neutronSecret: {{ .NeutronSecret }}
+  placementSecret: {{ .PlacementSecret }}
+  transportURLSecret: {{ .TransportURLSecret }}
   novaComputeCpuDedicatedSet: {{ .NovaComputeCPUDedicatedSet }}
   {{ end }}
   {{ if not (eq .NovaComputeCPUSharedSet "") }}
@@ -17,4 +18,3 @@ spec:
   {{ end }}
   novaComputeImage: docker.io/tripleotrain/rhel-binary-nova-compute:current-tripleo
   roleName: {{ .WorkerOspRole }}
-  serviceAccount: nova

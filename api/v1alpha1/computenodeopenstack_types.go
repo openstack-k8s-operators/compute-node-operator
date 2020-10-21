@@ -52,6 +52,8 @@ type ComputeNodeOpenStackSpec struct {
 	Performance PerformanceConfig `json:"performance,omitempty"`
 	// Manage selinux - Defaults to false
 	SelinuxDisabled bool `json:"selinuxDisabled,omitempty"`
+	// Cell the computes are assigned to, default cell1
+	Cell string `json:"cell,omitempty"`
 	// service account used to create pods
 	ServiceAccount string `json:"serviceAccount"`
 }
@@ -83,10 +85,14 @@ type NovaCompute struct {
 	NovaReservedHostMemory int32 `json:"novaReservedHostMemory,omitempty"`
 	// sshd migration port
 	SshdPort int32 `json:"sshdPort,omitempty"`
-	// Nova configMap containing the common config
-	CommonConfigMap string `json:"commonConfigMap,omitempty"`
-	// Nova secret containing the needed passwords
-	OspSecrets string `json:"ospSecrets,omitempty"`
+	// Nova secret containing the needed password, default "nova-secret"
+	NovaSecret string `json:"novaSecrets,omitempty"`
+	// Neutron secret containing the needed password, default "neutron-secret"
+	NeutronSecret string `json:"neutronSecrets,omitempty"`
+	// Placement secret containing the needed password, default "placement-secret"
+	PlacementSecret string `json:"placementSecrets,omitempty"`
+	// TransportURL secret containing the needed password, default nova-<CELL>-transport-url
+	TransportURLSecret string `json:"transportURLSecret,omitempty"`
 }
 
 // PerformanceConfig defines the OS tuning parameters
@@ -109,16 +115,20 @@ type CPUConfig struct {
 
 // NeutronNetwork defines neutron configuration parameters
 type NeutronNetwork struct {
-	Nic              string      `json:"nic"`
-	BridgeMappings   string      `json:"bridgeMappings,omitempty"`
-	MechanishDrivers string      `json:"mechanismDrivers,omitempty"`
-	ServicePlugings  string      `json:"servicePlugins,omitempty"`
-	Sriov            SriovConfig `json:"sriov,omitempty"`
+	Nic              string        `json:"nic"`
+	BridgeMappings   string        `json:"bridgeMappings,omitempty"`
+	MechanishDrivers string        `json:"mechanismDrivers,omitempty"`
+	ServicePlugings  string        `json:"servicePlugins,omitempty"`
+	Sriov            []SriovConfig `json:"sriov,omitempty"`
 }
 
 // SriovConfig defines SRIOV config parameters, such as nic information.
 type SriovConfig struct {
-	DevName string `json:"devName"`
+	Interface  string `json:"interface"`
+	NumVfs     int32  `json:"numVfs,omitempty"`
+	Network    string `json:"network"`
+	DeviceType string `json:"deviceType"`
+	Mtu        int32  `json:"mtu,omitempty"`
 }
 
 // NodeToDelete defines the name of the node to delete and if automatic drain is needed

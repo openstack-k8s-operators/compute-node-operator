@@ -43,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
+	sriovnetworkv1 "github.com/openshift/sriov-network-operator/pkg/apis/sriovnetwork/v1"
 	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/api/v1alpha1"
 	bindatautil "github.com/openstack-k8s-operators/compute-node-operator/pkg/bindata_util"
 	computenodeopenstack "github.com/openstack-k8s-operators/compute-node-operator/pkg/computenodeopenstack"
@@ -87,7 +88,7 @@ type ComputeNodeOpenStackReconciler struct {
 // +kubebuilder:rbac:groups=compute-node.openstack.org,resources=deployments/finalizers,verbs=update
 // +kubebuilder:rbac:groups=neutron.openstack.org,resources=ovncontrollers;ovsnodeosps,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=nova.openstack.org,resources=novacomputes;virtlogds;libvirtds;iscsids;novamigrationtargets,verbs=create;delete;get;list;patch;update;watch
-// +kubebuilder:rbac:groups=machine.openshift.io;machineconfiguration.openshift.io,resources="*",verbs="*"
+// +kubebuilder:rbac:groups=machine.openshift.io;machineconfiguration.openshift.io;sriovnetwork.openshift.io,resources="*",verbs="*"
 // +kubebuilder:rbac:groups=core,namespace=openstack,resources=pods,verbs=create;delete;get;list;patch;update;watch
 // +kubebuilder:rbac:groups=security.openshift.io,namespace=openstack,resources=securitycontextconstraints,resourceNames=hostnetwork,verbs=use
 
@@ -177,12 +178,15 @@ func (r *ComputeNodeOpenStackReconciler) Reconcile(req ctrl.Request) (ctrl.Resul
 		return ctrl.Result{}, err
 	}
 
+	// Available nodes in the role's machineset
+	var nodeCount int32
+
 	specMDS, err := util.CalculateHash(instance.Spec)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if reflect.DeepEqual(specMDS, instance.Status.SpecMDS) {
-		err = ensureMachineSetSync(r.Client, instance)
+		nodeCount, err = ensureMachineSetSync(r.Client, instance)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -201,6 +205,19 @@ func (r *ComputeNodeOpenStackReconciler) Reconcile(req ctrl.Request) (ctrl.Resul
 	// Need to reapply the spec
 	// Fill all defaults explicitly
 	data, err := getRenderData(context.TODO(), r.Client, instance)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Needed for SRIOV considerations in templates, because you do not want to attempt creating
+	// SriovNetworkNodePolicy resources if there are no nodes available in this role's machineset.
+	// Otherwise the SRIOV operator will throw an error when trying to apply any SriovNetworkNodePolicy
+	// that targets the nodes with the role (as it will find no nodes available, which it considers
+	// an error)
+	data.Data["AvailableNodeCount"] = nodeCount
+
+	// Handle SRIOV removal (if any -- add/update handled by "Worker" template logic below)
+	err = ensureSriovRemovalSync(r.Client, instance)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -316,6 +333,35 @@ func (r *ComputeNodeOpenStackReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		return nil
 	})
 
+	// watch for SriovNetworkNodePolicy with compute-node-operator CR owner ref
+	ospSriovNetworkNodePolicyFn := handler.ToRequestsFunc(func(o handler.MapObject) []reconcile.Request {
+		cc := mgr.GetClient()
+		result := []reconcile.Request{}
+		snnp := &sriovnetworkv1.SriovNetworkNodePolicy{}
+		key := client.ObjectKey{Namespace: o.Meta.GetNamespace(), Name: o.Meta.GetName()}
+		err := cc.Get(context.Background(), key, snnp)
+		if err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Unable to retrieve SriovNetworkNodePolicy %v")
+			return nil
+		}
+
+		label := snnp.ObjectMeta.GetLabels()
+		// verify object has ownerUIDLabelSelector
+		if uid, ok := label[ownerUIDLabelSelector]; ok {
+			log.Info(fmt.Sprintf("SriovNetworkNodePolicy object %s marked with OSP owner ref: %s", o.Meta.GetName(), uid))
+			// return namespace and Name of CR
+			name := client.ObjectKey{
+				Namespace: label[ownerNameSpaceLabelSelector],
+				Name:      label[ownerNameLabelSelector],
+			}
+			result = append(result, reconcile.Request{NamespacedName: name})
+		}
+		if len(result) > 0 {
+			return result
+		}
+		return nil
+	})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&computenodev1alpha1.ComputeNodeOpenStack{}).
 		Owns(&batchv1.Job{}).
@@ -324,11 +370,21 @@ func (r *ComputeNodeOpenStackReconciler) SetupWithManager(mgr ctrl.Manager) erro
 			&handler.EnqueueRequestsFromMapFunc{
 				ToRequests: ospMachineSetFn,
 			}).
+		Watches(&source.Kind{Type: &sriovnetworkv1.SriovNetworkNodePolicy{}},
+			&handler.EnqueueRequestsFromMapFunc{
+				ToRequests: ospSriovNetworkNodePolicyFn,
+			}).
 		Complete(r)
 }
 
 func getRenderData(ctx context.Context, client client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (bindatautil.RenderData, error) {
 	data := bindatautil.MakeRenderData()
+	// default to cell1 if not specifiec in CR
+	cell := "cell1"
+	if instance.Spec.Cell != "" {
+		cell = instance.Spec.Cell
+	}
+
 	data.Data["ClusterName"] = instance.Spec.ClusterName
 	data.Data["WorkerOspRole"] = instance.Spec.RoleName
 	data.Data["Workers"] = instance.Spec.Workers
@@ -365,7 +421,6 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	data.Data["NovaComputeCPUDedicatedSet"] = ""
 	data.Data["NovaComputeCPUSharedSet"] = ""
 	data.Data["NovaReservedHostMemory"] = 0
-	data.Data["CommonConfigMap"] = "common-config"
 	data.Data["OspSecrets"] = "osp-secrets"
 	if instance.Spec.Compute.NovaComputeCPUDedicatedSet != "" {
 		if data.Data["Isolcpus"] == false {
@@ -389,11 +444,25 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 	if instance.Spec.Compute.SshdPort != 0 {
 		data.Data["SshdPort"] = instance.Spec.Compute.SshdPort
 	}
-	if instance.Spec.Compute.CommonConfigMap != "" {
-		data.Data["CommonConfigMap"] = instance.Spec.Compute.CommonConfigMap
+	if instance.Spec.Compute.NovaSecret != "" {
+		data.Data["NovaSecret"] = instance.Spec.Compute.NovaSecret
+	} else {
+		data.Data["NovaSecret"] = "nova-secret"
 	}
-	if instance.Spec.Compute.OspSecrets != "" {
-		data.Data["OspSecrets"] = instance.Spec.Compute.OspSecrets
+	if instance.Spec.Compute.NeutronSecret != "" {
+		data.Data["NeutronSecret"] = instance.Spec.Compute.NeutronSecret
+	} else {
+		data.Data["NeutronSecret"] = "neutron-secret"
+	}
+	if instance.Spec.Compute.PlacementSecret != "" {
+		data.Data["PlacementSecret"] = instance.Spec.Compute.PlacementSecret
+	} else {
+		data.Data["PlacementSecret"] = "placement-secret"
+	}
+	if instance.Spec.Compute.TransportURLSecret != "" {
+		data.Data["TransportURLSecret"] = instance.Spec.Compute.TransportURLSecret
+	} else {
+		data.Data["TransportURLSecret"] = fmt.Sprintf("nova-%s-transport-url", cell)
 	}
 
 	data.Data["Nic"] = "enp2s0"
@@ -435,6 +504,9 @@ func getRenderData(ctx context.Context, client client.Client, instance *computen
 		return data, err
 	}
 	data.Data["RhcosImageUrl"] = providerData["image"]["url"]
+
+	// Set SriovConfig data
+	data.Data["Sriov"] = instance.Spec.Network.Sriov
 
 	return data, nil
 }
@@ -872,19 +944,6 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 	}
 	envVars = append(envVars, corev1.EnvVar{Name: "DISABLE_COMPUTE_SERVICES", Value: strings.Join(deletedTaggedNodes, " ")})
 
-	// Env vars to connect to openstack endpoints
-	// mschuppert - note:   the format of the secret/configmap might change when the OSP controller
-	//                      operators who in the end should populate this information are done. So
-	//                      likely changes are expected.
-	// From ConfigMap
-	for env, v := range openstackClient.Data {
-		envVars = append(envVars, corev1.EnvVar{Name: env, Value: v})
-	}
-	// From Secret
-	for env, v := range openstackClientAdmin.Data {
-		envVars = append(envVars, corev1.EnvVar{Name: env, Value: string(v)})
-	}
-
 	// Example to handle drain information
 	enableLiveMigration := "false"
 	if instance.Spec.Drain.Enabled {
@@ -901,6 +960,7 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 		}
 	}
 	envVars = append(envVars, corev1.EnvVar{Name: "LIVE_MIGRATION_ENABLED", Value: enableLiveMigration})
+	envVars = append(envVars, corev1.EnvVar{Name: "OS_CLOUD", Value: "default"})
 
 	volumes := []corev1.Volume{
 		{
@@ -914,6 +974,24 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 				},
 			},
 		},
+		{
+			Name: "openstack-config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: openstackClient.Name,
+					},
+				},
+			},
+		},
+		{
+			Name: "openstack-config-secret",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: openstackClientAdmin.Name,
+				},
+			},
+		},
 	}
 
 	volumeMounts := []corev1.VolumeMount{
@@ -921,6 +999,16 @@ func _triggerNodeDrain(c client.Client, nodeName string, instance *computenodev1
 			Name:      strings.ToLower(instance.Kind) + "-scripts",
 			ReadOnly:  true,
 			MountPath: "/usr/local/bin",
+		},
+		{
+			Name:      "openstack-config",
+			MountPath: "/etc/openstack/clouds.yaml",
+			SubPath:   "clouds.yaml",
+		},
+		{
+			Name:      "openstack-config-secret",
+			MountPath: "/etc/openstack/secure.yaml",
+			SubPath:   "secure.yaml",
 		},
 	}
 
@@ -1060,28 +1148,31 @@ func updateMachineDeletionSelection(c client.Client, instance *computenodev1alph
 	return nil
 }
 
-func ensureMachineSetSync(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
-	// get replicas at the openshift-machine-api machineset
+func ensureMachineSetSync(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) (int32, error) {
+	// get replicas at the openshift-machine-api machineset and return the current
+	// available machine replicas if machineset is found
 	workerMachineSet := &machinev1beta1.MachineSet{}
 	machineSetName := instance.Spec.ClusterName + "-" + instance.Spec.RoleName
+	var currentCount int32
 	err := c.Get(context.TODO(), types.NamespacedName{Name: machineSetName, Namespace: "openshift-machine-api"}, workerMachineSet)
 	if err != nil && errors.IsNotFound(err) {
 		log.Info(fmt.Sprintf("Machineset not found, recreate it: %s osp-worker nodes: %d", machineSetName, instance.Spec.Workers))
 		if err := c.Update(context.TODO(), instance); err != nil {
-			return err
+			return currentCount, err
 		}
 	} else if err != nil {
-		return err
+		return currentCount, err
 	} else {
+		currentCount = workerMachineSet.Status.AvailableReplicas
 		if *workerMachineSet.Spec.Replicas != instance.Spec.Workers {
 			// MachineSet has been updated, force CRD re-sync to match the machineset replicas
 			instance.Spec.Workers = *workerMachineSet.Spec.Replicas
 			if err := c.Update(context.TODO(), instance); err != nil {
-				return err
+				return currentCount, err
 			}
 		}
 	}
-	return nil
+	return currentCount, nil
 }
 
 func addToBeRemovedTaint(kclient kubernetes.Interface, node corev1.Node) error {
@@ -1361,6 +1452,56 @@ func deleteAllBlockerPodFinalizer(r *ComputeNodeOpenStackReconciler, instance *c
 	return nil
 }
 
+func ensureSriovRemovalSync(c client.Client, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
+	labelSelectorMap := map[string]string{
+		ownerUIDLabelSelector:       string(instance.UID),
+		ownerNameSpaceLabelSelector: instance.Namespace,
+		ownerNameLabelSelector:      instance.Name,
+	}
+
+	// Get all SRIOV policies tied to this instance
+	sriovNetworkNodePolicies, err := computenodeopenstack.GetSriovNetworkNodePoliciesWithLabel(c, instance, labelSelectorMap, instance.Namespace)
+	if err != nil {
+		return err
+	}
+
+	findInterface := func(instance *computenodev1alpha1.ComputeNodeOpenStack, interfaceName string) bool {
+		for _, sriovConfig := range instance.Spec.Network.Sriov {
+			if sriovConfig.Interface == interfaceName {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	// Iterate through SRIOV policies and delete those that have no interfaces represented
+	// in the instance's Network.Sriov spec
+	for idx := range sriovNetworkNodePolicies.Items {
+		snnp := &sriovNetworkNodePolicies.Items[idx]
+
+		foundInterface := false
+
+		for _, interfaceName := range snnp.Spec.NicSelector.PfNames {
+			foundInterface = findInterface(instance, interfaceName)
+
+			if foundInterface {
+				break
+			}
+		}
+
+		if !foundInterface {
+			err = c.Delete(context.Background(), snnp, &client.DeleteOptions{})
+			if err != nil {
+				return err
+			}
+			log.Info(fmt.Sprintf("Deleting SriovNetworkNodePolicy that does not match instance SRIOV interfaces: name %s - %s", snnp.Name, snnp.UID))
+		}
+	}
+
+	return nil
+}
+
 /* deleteOwnerRefLabeledObjects - cleans up namespaced objects outside the default namespace
    using the owner reference labels added.
    List of objects which get cleaned:
@@ -1369,6 +1510,7 @@ func deleteAllBlockerPodFinalizer(r *ComputeNodeOpenStackReconciler, instance *c
    - user-data secret, openshift-machine-api namespace
    - machineconfigpool, not namespaced
    - machineconfig, not namespaced
+   - sriovnetworknodepolicy, namespace information from CR.Spec
 */
 func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *computenodev1alpha1.ComputeNodeOpenStack) error {
 	labelSelectorMap := map[string]string{
@@ -1444,7 +1586,22 @@ func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *c
 		log.Info(fmt.Sprintf("MachineConfig deleted: name %s - %s", mc.Name, mc.UID))
 	}
 
-	// delete performanceprofiles in instance namespace
+  // delete sriovnetworknodepolicies in instance namespace
+	sriovNetworkNodePolicies, err := computenodeopenstack.GetSriovNetworkNodePoliciesWithLabel(r.Client, instance, labelSelectorMap, instance.Namespace)
+	if err != nil {
+		return err
+	}
+	for idx := range sriovNetworkNodePolicies.Items {
+		snnp := &sriovNetworkNodePolicies.Items[idx]
+
+		err = r.Client.Delete(context.Background(), snnp, &client.DeleteOptions{})
+		if err != nil {
+			return err
+		}
+		log.Info(fmt.Sprintf("SriovNetworkNodePolicy deleted: name %s - %s", snnp.Name, snnp.UID))
+	}
+  
+  // delete performanceprofiles in instance namespace
 	performanceProfiles, err := computenodeopenstack.GetPerformanceProfilesWithLabel(r.Client, instance, labelSelectorMap)
 	if err != nil {
 		return err
