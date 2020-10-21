@@ -94,6 +94,7 @@ rules:
 - apiGroups:
   - machine.openshift.io
   - machineconfiguration.openshift.io
+  - sriovnetwork.openshift.io
   resources:
   - '*'
   verbs:
