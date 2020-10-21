@@ -8,6 +8,7 @@ spec:
   neutronSecret: {{ .NeutronSecret }}
   placementSecret: {{ .PlacementSecret }}
   transportURLSecret: {{ .TransportURLSecret }}
+  {{ if not (eq .NovaComputeCPUDedicatedSet "") }}
   novaComputeCpuDedicatedSet: {{ .NovaComputeCPUDedicatedSet }}
   {{ end }}
   {{ if not (eq .NovaComputeCPUSharedSet "") }}

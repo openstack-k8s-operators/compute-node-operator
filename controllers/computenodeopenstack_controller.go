@@ -1586,7 +1586,7 @@ func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *c
 		log.Info(fmt.Sprintf("MachineConfig deleted: name %s - %s", mc.Name, mc.UID))
 	}
 
-  // delete sriovnetworknodepolicies in instance namespace
+	// delete sriovnetworknodepolicies in instance namespace
 	sriovNetworkNodePolicies, err := computenodeopenstack.GetSriovNetworkNodePoliciesWithLabel(r.Client, instance, labelSelectorMap, instance.Namespace)
 	if err != nil {
 		return err
@@ -1600,8 +1600,8 @@ func deleteOwnerRefLabeledObjects(r *ComputeNodeOpenStackReconciler, instance *c
 		}
 		log.Info(fmt.Sprintf("SriovNetworkNodePolicy deleted: name %s - %s", snnp.Name, snnp.UID))
 	}
-  
-  // delete performanceprofiles in instance namespace
+
+	// delete performanceprofiles in instance namespace
 	performanceProfiles, err := computenodeopenstack.GetPerformanceProfilesWithLabel(r.Client, instance, labelSelectorMap)
 	if err != nil {
 		return err
