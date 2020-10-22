@@ -13,18 +13,33 @@ spec:
   selinuxDisabled: true
   networkGateway: true
   compute:
-    novaComputeCPUDedicatedSet: "4-7"
-    novaComputeCPUSharedSet: "0-3"
+    novaComputeCPUDedicatedSet: "2-3"
+    novaComputeCPUSharedSet: "0-1"
+    novaReservedHostMemory: 4096
     sshdPort: 2022
     commonConfigMap: common-config
     ospSecrets: osp-secrets
+  performance:
+    hugepages:
+      defaultHugePagesSize: "1G"
+      pages:
+      - size: "1G"
+        count: "4"
+    cpu:
+      isolated: "2-3"
+      reserved: "0-1"
   network:
     nic: "enp2s0"
     bridgeMappings: "datacentre:br-ex"
     mechanismDrivers: ""
     servicePlugins: ""
-    sriov:
-      devName: "test"
+    sriov: []
+    # Uncomment and customize to allocate VFs on an SRIOV-capable NIC on actual baremetal hardware
+    #- interface: enp7s0
+    #  mtu: 9000
+    #  numVfs: 32
+    #  deviceType: vfio-pci
+    #  network: sriov-phy1
 # needed if openshift-sdn is not running
 #  infraDaemonSets:
 #  - name: multus

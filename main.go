@@ -32,8 +32,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	performancev1alpha1 "github.com/openshift-kni/performance-addon-operators/pkg/apis/performance/v1alpha1"
 	machinev1beta1 "github.com/openshift/cluster-api/pkg/apis/machine/v1beta1"
 	mcfgv1 "github.com/openshift/machine-config-operator/pkg/apis/machineconfiguration.openshift.io/v1"
+	sriovnetworkv1 "github.com/openshift/sriov-network-operator/pkg/apis/sriovnetwork/v1"
 	computenodev1alpha1 "github.com/openstack-k8s-operators/compute-node-operator/api/v1alpha1"
 	"github.com/openstack-k8s-operators/compute-node-operator/controllers"
 	"github.com/prometheus/common/log"
@@ -51,6 +53,8 @@ func init() {
 	utilruntime.Must(computenodev1alpha1.AddToScheme(scheme))
 	utilruntime.Must(machinev1beta1.AddToScheme(scheme))
 	utilruntime.Must(mcfgv1.AddToScheme(scheme))
+	utilruntime.Must(performancev1alpha1.SchemeBuilder.AddToScheme(scheme))
+	utilruntime.Must(sriovnetworkv1.AddToScheme(scheme))
 
 	// +kubebuilder:scaffold:scheme
 }
